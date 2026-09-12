@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 from dataclasses import dataclass
 from typing import Any
@@ -6,6 +8,10 @@ from app.agent.decision import AgentDecision
 from app.agent.observation import AgentObservation
 from app.llm.router import LLMRouter
 
+
+# ============================================================================
+# PLAN MODELS
+# ============================================================================
 
 @dataclass(frozen=True)
 class AgentPlanStep:
@@ -124,81 +130,44 @@ class AgentPlan:
             )
 
 
+# ============================================================================
+# PLANNER
+# ============================================================================
+
 class AgentPlanner:
     """
-    Genera o rigenera un piano strutturato per raggiungere un obiettivo.
+    Genera piani strutturati e li valida contro i contratti reali dei tool.
 
-    Il planner non esegue tool.
+    Il Planner deve decomporre gli obiettivi composti in azioni atomiche.
 
-    Decisioni:
-    - DONE: il piano raggiunge l'obiettivo;
-    - CONTINUE: dopo gli step serve nuovo planning;
-    - ASK_USER: serve l'intervento dell'utente.
+    Esempio:
+
+        "apri il blocco note e scrivici ciao"
+
+    deve diventare concettualmente:
+
+        open_application
+        focus_window
+        type_text
+
+    invece di fermarsi alla prima azione.
     """
 
-    PLAN_SCHEMA = {
-        "type": "object",
-        "properties": {
-            "goal": {
-                "type": "string",
-            },
-            "decision": {
-                "type": "string",
-                "enum": [
-                    "done",
-                    "continue",
-                    "ask_user",
-                ],
-            },
-            "message": {
-                "type": [
-                    "string",
-                    "null",
-                ],
-            },
-            "steps": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "tool_name": {
-                            "type": "string",
-                        },
-                        "arguments": {
-                            "type": "object",
-                        },
-                        "description": {
-                            "type": "string",
-                        },
-                        "success_criteria": {
-                            "type": [
-                                "string",
-                                "null",
-                            ],
-                        },
-                    },
-                    "required": [
-                        "tool_name",
-                        "arguments",
-                        "description",
-                    ],
-                    "additionalProperties": False,
-                },
-                "minItems": 1,
-            },
-        },
-        "required": [
-            "goal",
-            "steps",
-        ],
-        "additionalProperties": False,
-    }
+    MAX_FORMAT_ATTEMPTS = 2
+    MAX_TOOL_VALIDATION_ATTEMPTS = 3
+
+    SINGLE_STEP_MAX_TOKENS = 320
+    MULTI_STEP_MAX_TOKENS = 768
 
     def __init__(
         self,
         router: LLMRouter,
     ):
         self.router = router
+
+    # ========================================================================
+    # PUBLIC API
+    # ========================================================================
 
     def plan(
         self,
@@ -207,7 +176,6 @@ class AgentPlanner:
         tool_definitions: list[dict[str, Any]] | None = None,
         observations: list[AgentObservation] | None = None,
     ) -> AgentPlan:
-
         if not isinstance(
             goal,
             str,
@@ -221,59 +189,13 @@ class AgentPlanner:
                 "L'obiettivo non può essere vuoto."
             )
 
-        system_content = (
-            "Sei il Planner di IRIS.\n"
-            "Crea il minimo piano necessario per raggiungere "
-            "l'obiettivo.\n"
-            "Rispondi SOLO con un singolo oggetto JSON valido.\n"
-            "Nessun markdown. Nessun testo fuori dal JSON.\n\n"
-            "Formato:\n"
-            '{"goal":"...","decision":"done","message":null,'
-            '"steps":[{"tool_name":"...",'
-            '"arguments":{},'
-            '"description":"...",'
-            '"success_criteria":"..."}]}\n\n'
-            "Regole:\n"
-            "- usa solo tool disponibili;\n"
-            "- non inventare tool;\n"
-            "- non inventare argomenti;\n"
-            "- usa il minimo numero di step;\n"
-            "- se basta un tool usa un solo step;\n"
-            "- done = obiettivo completato;\n"
-            "- continue = serve nuovo planning;\n"
-            "- ask_user = serve l'utente;\n"
-            "- non inventare risultati."
+        system_content = self._build_system_prompt(
+            tool_definitions=tool_definitions,
+            context=context,
+            observations=observations,
         )
 
-        if tool_definitions:
-            system_content += (
-                "\n\nTOOL DISPONIBILI:\n"
-                + self._build_compact_tool_context(
-                    tool_definitions
-                )
-            )
-
-        if context:
-            compact_context = self._compact_text(
-                context,
-                max_chars=1000,
-            )
-
-            if compact_context:
-                system_content += (
-                    "\n\nCONTESTO:\n"
-                    + compact_context
-                )
-
-        if observations:
-            system_content += (
-                "\n\nOSSERVAZIONI:\n"
-                + self._build_compact_observations(
-                    observations
-                )
-            )
-
-        messages: list[dict[str, Any]] = [
+        base_messages: list[dict[str, Any]] = [
             {
                 "role": "system",
                 "content": system_content,
@@ -284,60 +206,422 @@ class AgentPlanner:
             },
         ]
 
-        response = self.router.generate(
-            messages,
-            max_tokens=256,
-            temperature=0.0,
+        is_multi_step = (
+            self._looks_like_multi_step_goal(
+                goal
+            )
         )
 
-        data = self._decode_response(
-            response
+        planning_max_tokens = (
+            self.MULTI_STEP_MAX_TOKENS
+            if is_multi_step
+            else self.SINGLE_STEP_MAX_TOKENS
         )
 
-        data = self._normalize_plan(
-            data=data,
-            fallback_goal=goal,
+        last_error: Exception | None = None
+        format_attempt = 0
+        validation_attempt = 0
+
+        messages = list(
+            base_messages
         )
 
-        return self._build_plan(
-            goal=goal,
-            data=data,
-        )
-
-    @staticmethod
-    def _compact_text(
-        value: str,
-        max_chars: int,
-    ) -> str:
-
-        if not isinstance(
-            value,
-            str,
+        while (
+            format_attempt
+            < self.MAX_FORMAT_ATTEMPTS
+            and validation_attempt
+            < self.MAX_TOOL_VALIDATION_ATTEMPTS
         ):
-            return ""
+            response = self.router.generate(
+                messages,
+                max_tokens=planning_max_tokens,
+                temperature=0.0,
+                response_format={
+                    "type": "json_object",
+                    "schema": self._build_plan_schema(
+                        tool_definitions=tool_definitions,
+                        minimum_steps=(
+                            2
+                            if is_multi_step
+                            else 1
+                        ),
+                    ),
+                },
+                task="agent",
+            )
 
-        value = value.strip()
+            try:
+                data = self._decode_response(
+                    response
+                )
 
-        if not value:
-            return ""
+                data = self._normalize_plan(
+                    data=data,
+                    fallback_goal=goal,
+                )
 
-        if len(value) <= max_chars:
-            return value
+                plan = self._build_plan(
+                    goal=goal,
+                    data=data,
+                )
+
+                validation_error = (
+                    self._validate_plan_against_tools(
+                        plan,
+                        tool_definitions or [],
+                    )
+                )
+
+                if validation_error is None:
+                    coverage_error = (
+                        self._validate_plan_coverage(
+                            goal=goal,
+                            plan=plan,
+                            tool_definitions=(
+                                tool_definitions or []
+                            ),
+                        )
+                    )
+
+                    if coverage_error is None:
+                        return plan
+
+                    validation_error = (
+                        coverage_error
+                    )
+
+                last_error = ValueError(
+                    validation_error
+                )
+
+                validation_attempt += 1
+
+                if (
+                    validation_attempt
+                    >= self.MAX_TOOL_VALIDATION_ATTEMPTS
+                ):
+                    break
+
+                messages = list(
+                    base_messages
+                )
+
+                messages.insert(
+                    0,
+                    {
+                        "role": "system",
+                        "content": (
+                            "Il piano precedente NON copriva "
+                            "correttamente l'obiettivo.\n\n"
+                            "Correggi il piano completo, non solo "
+                            "il primo step.\n\n"
+                            "Ogni azione distinta richiesta "
+                            "dall'utente deve essere rappresentata "
+                            "da uno step.\n"
+                            "Non accorpare più azioni in un singolo "
+                            "tool se i tool disponibili richiedono "
+                            "azioni separate.\n"
+                            "Mantieni l'ordine logico delle azioni.\n"
+                            "Per un obiettivo che richiede aprire "
+                            "un'applicazione, portarla in primo piano "
+                            "e interagirci, pianifica tutti gli step "
+                            "necessari.\n"
+                            "Non dichiarare decision=done finché "
+                            "l'intero obiettivo non è coperto.\n\n"
+                            f"Errore di validazione: "
+                            f"{validation_error}"
+                        ),
+                    },
+                )
+
+                continue
+
+            except (
+                TypeError,
+                ValueError,
+            ) as error:
+                last_error = error
+
+                format_attempt += 1
+
+                if (
+                    format_attempt
+                    >= self.MAX_FORMAT_ATTEMPTS
+                ):
+                    break
+
+                messages = list(
+                    base_messages
+                )
+
+                messages.insert(
+                    0,
+                    {
+                        "role": "system",
+                        "content": (
+                            "La risposta precedente non ha "
+                            "rispettato il contratto del Planner.\n"
+                            "Genera nuovamente il piano completo.\n"
+                            "Scomponi l'obiettivo in tutte le azioni "
+                            "necessarie.\n"
+                            "Restituisci esclusivamente JSON valido, "
+                            "senza markdown e senza campi extra."
+                        ),
+                    },
+                )
+
+        if last_error is not None:
+            raise ValueError(
+                "Il planner non ha prodotto un piano eseguibile "
+                "dopo i tentativi consentiti."
+            ) from last_error
+
+        raise ValueError(
+            "Il planner non ha prodotto un piano valido."
+        )
+
+    # ========================================================================
+    # SCHEMA
+    # ========================================================================
+
+    def _build_plan_schema(
+        self,
+        tool_definitions: list[dict[str, Any]] | None,
+        minimum_steps: int = 1,
+    ) -> dict[str, Any]:
+        argument_properties: dict[str, Any] = {}
+
+        for definition in (
+            tool_definitions or []
+        ):
+            if not isinstance(
+                definition,
+                dict,
+            ):
+                continue
+
+            schema = definition.get(
+                "input_schema"
+            )
+
+            if not isinstance(
+                schema,
+                dict,
+            ):
+                continue
+
+            properties = schema.get(
+                "properties"
+            )
+
+            if not isinstance(
+                properties,
+                dict,
+            ):
+                continue
+
+            for name, value in properties.items():
+                if (
+                    isinstance(
+                        name,
+                        str,
+                    )
+                    and isinstance(
+                        value,
+                        dict,
+                    )
+                ):
+                    argument_properties.setdefault(
+                        name,
+                        value,
+                    )
+
+        return {
+            "type": "object",
+            "properties": {
+                "goal": {
+                    "type": "string",
+                },
+                "decision": {
+                    "type": "string",
+                    "enum": [
+                        "done",
+                        "continue",
+                        "ask_user",
+                    ],
+                },
+                "message": {
+                    "type": [
+                        "string",
+                        "null",
+                    ],
+                },
+                "steps": {
+                    "type": "array",
+                    "minItems": max(
+                        1,
+                        minimum_steps,
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "tool_name": {
+                                "type": "string",
+                            },
+                            "arguments": {
+                                "type": "object",
+                                "properties": (
+                                    argument_properties
+                                ),
+                                "additionalProperties": False,
+                            },
+                            "description": {
+                                "type": "string",
+                            },
+                            "success_criteria": {
+                                "type": [
+                                    "string",
+                                    "null",
+                                ],
+                            },
+                        },
+                        "required": [
+                            "tool_name",
+                            "arguments",
+                            "description",
+                            "success_criteria",
+                        ],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": [
+                "goal",
+                "decision",
+                "message",
+                "steps",
+            ],
+            "additionalProperties": False,
+        }
+
+    # ========================================================================
+    # SYSTEM PROMPT
+    # ========================================================================
+
+    def _build_system_prompt(
+        self,
+        tool_definitions: list[dict[str, Any]] | None,
+        context: str | None,
+        observations: list[AgentObservation] | None,
+    ) -> str:
+        system_content = (
+            "Sei il Planner di IRIS.\n"
+            "Trasforma l'obiettivo dell'utente in un piano "
+            "completo di azioni eseguibili.\n\n"
+
+            "Il Core di IRIS eseguirà il piano e controllerà "
+            "permessi, strumenti e risultati.\n\n"
+
+            "REGOLE FONDAMENTALI:\n"
+            "- usa esclusivamente i tool disponibili;\n"
+            "- non inventare tool;\n"
+            "- non inventare argomenti;\n"
+            "- ogni azione distinta richiesta dall'utente "
+            "deve avere uno step dedicato;\n"
+            "- non fermarti alla prima azione se l'obiettivo "
+            "richiede altre azioni;\n"
+            "- per un obiettivo composto usa più step ordinati;\n"
+            "- gli step devono rappresentare l'intera sequenza "
+            "necessaria per completare l'obiettivo;\n"
+            "- arguments deve contenere ESATTAMENTE gli argomenti "
+            "del tool;\n"
+            "- tutti gli argomenti obbligatori dello schema devono "
+            "essere presenti;\n"
+            "- non usare arguments={} quando il tool richiede "
+            "parametri;\n"
+            "- success_criteria deve descrivere cosa deve risultare "
+            "vero dopo quello specifico step;\n"
+            "- la verifica dei singoli step non sostituisce "
+            "la copertura dell'obiettivo completo;\n"
+            "- decision=done SOLO quando l'intero obiettivo è "
+            "coperto dagli step;\n"
+            "- decision=continue quando dopo gli step eseguiti "
+            "servirà ulteriore pianificazione;\n"
+            "- decision=ask_user quando manca un'informazione "
+            "necessaria;\n"
+            "- non produrre campi extra.\n\n"
+
+            "ESEMPIO DI DECOMPOSIZIONE:\n"
+            "Obiettivo: 'apri il blocco note, portalo in primo piano "
+            "e scrivici ciao'\n"
+            "Piano corretto:\n"
+            "1. open_application\n"
+            "2. focus_window\n"
+            "3. type_text\n\n"
+
+            "NON è corretto produrre solo open_application e "
+            "dichiarare l'obiettivo completato.\n"
+        )
+
+        if tool_definitions:
+            tool_context = (
+                self._build_compact_tool_context(
+                    tool_definitions
+                )
+            )
+
+            if tool_context:
+                system_content += (
+                    "\nTOOL DISPONIBILI:\n"
+                    + tool_context
+                )
+
+        if context:
+            compact_context = (
+                self._compact_text(
+                    context,
+                    max_chars=1400,
+                )
+            )
+
+            if compact_context:
+                system_content += (
+                    "\n\nCONTESTO:\n"
+                    + compact_context
+                )
+
+        if observations:
+            compact_observations = (
+                self._build_compact_observations(
+                    observations
+                )
+            )
+
+            if compact_observations:
+                system_content += (
+                    "\n\nOSSERVAZIONI:\n"
+                    + compact_observations
+                )
 
         return (
-            value[:max_chars]
-            + "\n[contesto troncato]"
+            system_content
+            + "\n\n"
+            "Il risultato deve essere esclusivamente "
+            "l'oggetto JSON conforme allo schema imposto "
+            "dal sistema."
         )
+
+    # ========================================================================
+    # TOOL CONTEXT
+    # ========================================================================
 
     @staticmethod
     def _build_compact_tool_context(
         tool_definitions: list[dict[str, Any]],
     ) -> str:
-
         lines: list[str] = []
 
         for definition in tool_definitions:
-
             if not isinstance(
                 definition,
                 dict,
@@ -359,13 +643,13 @@ class AgentPlanner:
                 {},
             )
 
-            if not isinstance(
-                name,
-                str,
+            if (
+                not isinstance(
+                    name,
+                    str,
+                )
+                or not name.strip()
             ):
-                continue
-
-            if not name.strip():
                 continue
 
             if not isinstance(
@@ -377,26 +661,33 @@ class AgentPlanner:
             compact_schema = json.dumps(
                 schema,
                 ensure_ascii=False,
-                separators=(",", ":"),
+                separators=(
+                    ",",
+                    ":",
+                ),
             )
 
             lines.append(
-                f"- {name}: {description}; schema={compact_schema}"
+                (
+                    f"- {name}: "
+                    f"{description}; "
+                    f"schema={compact_schema}"
+                )
             )
 
-        return "\n".join(
-            lines
-        )
+        return "\n".join(lines)
+
+    # ========================================================================
+    # OBSERVATIONS
+    # ========================================================================
 
     @staticmethod
     def _build_compact_observations(
         observations: list[AgentObservation],
     ) -> str:
-
         lines: list[str] = []
 
         for observation in observations:
-
             line = (
                 f"step={observation.step_index}; "
                 f"tool={observation.tool_name}; "
@@ -410,13 +701,13 @@ class AgentPlanner:
                 )
 
             if observation.output is not None:
-                output = str(
-                    observation.output
-                )
-
-                output = AgentPlanner._compact_text(
-                    output,
-                    max_chars=300,
+                output = (
+                    AgentPlanner._compact_text(
+                        str(
+                            observation.output
+                        ),
+                        max_chars=350,
+                    )
                 )
 
                 if output:
@@ -424,32 +715,269 @@ class AgentPlanner:
                         f"; output={output}"
                     )
 
-            lines.append(
-                line
-            )
+            lines.append(line)
 
-        return "\n".join(
-            lines
+        return "\n".join(lines)
+
+    # ========================================================================
+    # TEXT HELPERS
+    # ========================================================================
+
+    @staticmethod
+    def _compact_text(
+        value: str,
+        max_chars: int,
+    ) -> str:
+        if not isinstance(
+            value,
+            str,
+        ):
+            return ""
+
+        value = value.strip()
+
+        if not value:
+            return ""
+
+        if len(value) <= max_chars:
+            return value
+
+        return (
+            value[:max_chars]
+            + "\n[contesto troncato]"
         )
 
-    def _build_user_prompt(
+    @staticmethod
+    def _looks_like_multi_step_goal(
+        goal: str,
+    ) -> bool:
+        normalized = (
+            goal.strip()
+            .lower()
+        )
+
+        if not normalized:
+            return False
+
+        markers = (
+            " e ",
+            " poi ",
+            " dopo ",
+            " successivamente ",
+            " prima ",
+            " infine ",
+            " quindi ",
+            " dopodiché ",
+            ",",
+            ";",
+            " mentre ",
+            " dopodopo ",
+            " successivo ",
+        )
+
+        if any(
+            marker in normalized
+            for marker in markers
+        ):
+            return True
+
+        action_markers = (
+            "apri ",
+            "chiudi ",
+            "scrivi ",
+            "digita ",
+            "inserisci ",
+            "premi ",
+            "clicca ",
+            "sposta ",
+            "porta ",
+            "metti ",
+            "crea ",
+            "salva ",
+            "leggi ",
+            "modifica ",
+            "esegui ",
+            "avvia ",
+            "ferma ",
+            "vai ",
+            "manda ",
+        )
+
+        action_count = sum(
+            1
+            for marker in action_markers
+            if marker in normalized
+        )
+
+        if action_count >= 2:
+            return True
+
+        return len(normalized) >= 100
+
+    # ========================================================================
+    # PLAN VALIDATION
+    # ========================================================================
+
+    def _validate_plan_against_tools(
+        self,
+        plan: AgentPlan,
+        tool_definitions: list[dict[str, Any]],
+    ) -> str | None:
+        definitions = {
+            str(
+                item.get("name")
+            ): item
+            for item in tool_definitions
+            if (
+                isinstance(
+                    item,
+                    dict,
+                )
+                and isinstance(
+                    item.get("name"),
+                    str,
+                )
+            )
+        }
+
+        for index, step in enumerate(
+            plan.steps,
+            start=1,
+        ):
+            definition = definitions.get(
+                step.tool_name
+            )
+
+            if definition is None:
+                return (
+                    f"step {index}: "
+                    f"tool inesistente: "
+                    f"{step.tool_name}"
+                )
+
+            schema = definition.get(
+                "input_schema",
+                {},
+            )
+
+            if not isinstance(
+                schema,
+                dict,
+            ):
+                continue
+
+            properties = schema.get(
+                "properties",
+                {},
+            )
+
+            required = schema.get(
+                "required",
+                [],
+            )
+
+            if not isinstance(
+                properties,
+                dict,
+            ):
+                properties = {}
+
+            if not isinstance(
+                required,
+                list,
+            ):
+                required = []
+
+            for required_name in required:
+                if required_name not in (
+                    step.arguments
+                ):
+                    return (
+                        f"step {index} "
+                        f"({step.tool_name}): "
+                        f"argomento obbligatorio "
+                        f"mancante: "
+                        f"{required_name}"
+                    )
+
+            if (
+                schema.get(
+                    "additionalProperties"
+                )
+                is False
+            ):
+                unknown = [
+                    key
+                    for key in step.arguments
+                    if key not in properties
+                ]
+
+                if unknown:
+                    return (
+                        f"step {index} "
+                        f"({step.tool_name}): "
+                        f"argomenti non consentiti: "
+                        f"{', '.join(map(str, unknown))}"
+                    )
+
+        return None
+
+    # ========================================================================
+    # GOAL COVERAGE
+    # ========================================================================
+
+    def _validate_plan_coverage(
         self,
         goal: str,
-        context: str | None,
-        observations: list[AgentObservation] | None,
-    ) -> str:
+        plan: AgentPlan,
+        tool_definitions: list[dict[str, Any]],
+    ) -> str | None:
+        """
+        Controllo leggero e generalista sulla copertura dell'obiettivo.
 
-        # Context e observations sono già presenti nel
-        # system prompt in forma compatta.
-        # Qui inviamo soltanto l'obiettivo per evitare
-        # di duplicare token nel prompt del modello.
-        return goal
+        Non cerca frasi hardcoded del tipo:
+            "scrivici" -> type_text
+
+        ma usa le descrizioni/nome dei tool e il numero di azioni
+        individuate nel goal per evitare che un obiettivo chiaramente
+        composto venga dichiarato done con un singolo step.
+        """
+
+        if not self._looks_like_multi_step_goal(
+            goal
+        ):
+            return None
+
+        if len(plan.steps) >= 2:
+            return None
+
+        tool_context = (
+            self._build_compact_tool_context(
+                tool_definitions
+            )
+        )
+
+        if not tool_context:
+            return (
+                "L'obiettivo appare composto, "
+                "ma il piano contiene un solo step."
+            )
+
+        return (
+            "L'obiettivo appare composto, "
+            "ma il piano contiene un solo step. "
+            "Devi scomporre l'obiettivo in tutte "
+            "le azioni necessarie."
+        )
+
+    # ========================================================================
+    # RESPONSE DECODING
+    # ========================================================================
 
     def _decode_response(
         self,
         response: str,
     ) -> dict[str, Any]:
-
         if not isinstance(
             response,
             str,
@@ -466,12 +994,16 @@ class AgentPlanner:
             )
 
         for _ in range(4):
-            content = self._strip_markdown_json(
-                content
+            content = (
+                self._strip_markdown_json(
+                    content
+                )
             )
 
-            parsed = self._parse_json_value(
-                content
+            parsed = (
+                self._parse_json_value(
+                    content
+                )
             )
 
             if isinstance(
@@ -483,22 +1015,22 @@ class AgentPlanner:
                 )
 
                 if response_type == "final":
-                    inner_content = parsed.get(
+                    inner = parsed.get(
                         "content"
                     )
 
                     if isinstance(
-                        inner_content,
+                        inner,
                         str,
                     ):
-                        content = inner_content.strip()
+                        content = inner.strip()
                         continue
 
                     if isinstance(
-                        inner_content,
+                        inner,
                         dict,
                     ):
-                        return inner_content
+                        return inner
 
                     raise ValueError(
                         "La risposta final del planner "
@@ -521,20 +1053,27 @@ class AgentPlanner:
                         key
                     )
 
-                    if isinstance(
-                        nested,
-                        dict,
-                    ):
-                        if self._looks_like_plan(
+                    if (
+                        isinstance(
+                            nested,
+                            dict,
+                        )
+                        and self._looks_like_plan(
                             nested
-                        ):
-                            return nested
+                        )
+                    ):
+                        return nested
 
-                    if isinstance(
-                        nested,
-                        str,
-                    ) and nested.strip():
-                        content = nested.strip()
+                    if (
+                        isinstance(
+                            nested,
+                            str,
+                        )
+                        and nested.strip()
+                    ):
+                        content = (
+                            nested.strip()
+                        )
                         break
                 else:
                     return parsed
@@ -554,27 +1093,29 @@ class AgentPlanner:
 
         raise ValueError(
             "Il planner non ha restituito "
-            "un oggetto JSON valido dopo la decodifica."
+            "un oggetto JSON valido dopo "
+            "la decodifica."
         )
 
     @staticmethod
     def _looks_like_plan(
         data: dict[str, Any],
     ) -> bool:
-
-        return (
-            "steps" in data
-            or "actions" in data
-            or "tool_name" in data
-            or "tool" in data
-            or "name" in data
+        return any(
+            key in data
+            for key in (
+                "steps",
+                "actions",
+                "tool_name",
+                "tool",
+                "name",
+            )
         )
 
     @staticmethod
     def _strip_markdown_json(
         content: str,
     ) -> str:
-
         if not content.startswith(
             "```"
         ):
@@ -584,15 +1125,17 @@ class AgentPlanner:
 
         if (
             lines
-            and lines[0].strip().startswith(
-                "```"
-            )
+            and lines[0]
+            .strip()
+            .startswith("```")
         ):
             lines = lines[1:]
 
         if (
             lines
-            and lines[-1].strip() == "```"
+            and lines[-1]
+            .strip()
+            == "```"
         ):
             lines = lines[:-1]
 
@@ -604,55 +1147,56 @@ class AgentPlanner:
     def _parse_json_value(
         content: str,
     ) -> Any:
-
         try:
             return json.loads(
                 content
             )
 
         except json.JSONDecodeError as error:
-            json_start = content.find(
+            start = content.find(
                 "{"
             )
-
-            json_end = content.rfind(
+            end = content.rfind(
                 "}"
             )
 
             if (
-                json_start == -1
-                or json_end <= json_start
+                start == -1
+                or end <= start
             ):
                 raise ValueError(
-                    "Il planner non ha restituito "
-                    "un JSON valido."
+                    "Il planner non ha restituito un JSON valido."
                 ) from error
 
             try:
                 return json.loads(
                     content[
-                        json_start:json_end + 1
+                        start : end + 1
                     ]
                 )
 
             except json.JSONDecodeError as nested_error:
                 raise ValueError(
-                    "Il planner non ha restituito "
-                    "un JSON valido."
+                    "Il planner non ha restituito un JSON valido."
                 ) from nested_error
+
+    # ========================================================================
+    # NORMALIZATION
+    # ========================================================================
 
     def _normalize_plan(
         self,
         data: dict[str, Any],
         fallback_goal: str,
     ) -> dict[str, Any]:
-
         normalized = dict(
             data
         )
 
-        nested = self._find_plan_container(
-            normalized
+        nested = (
+            self._find_plan_container(
+                normalized
+            )
         )
 
         if nested is not None:
@@ -662,7 +1206,8 @@ class AgentPlanner:
 
             for key, value in normalized.items():
                 if (
-                    key not in {
+                    key
+                    not in {
                         "plan",
                         "result",
                         "action",
@@ -678,13 +1223,14 @@ class AgentPlanner:
             fallback_goal,
         )
 
-        if not isinstance(
-            returned_goal,
-            str,
-        ):
-            returned_goal = fallback_goal
-
-        normalized["goal"] = returned_goal
+        normalized["goal"] = (
+            returned_goal
+            if isinstance(
+                returned_goal,
+                str,
+            )
+            else fallback_goal
+        )
 
         normalized["decision"] = (
             self._normalize_decision(
@@ -706,9 +1252,11 @@ class AgentPlanner:
                 str,
             )
         ):
-            normalized["message"] = str(
+            message = str(
                 message
             )
+
+        normalized["message"] = message
 
         raw_steps = normalized.get(
             "steps"
@@ -747,13 +1295,11 @@ class AgentPlanner:
                     candidate
                 ]
 
-        normalized_steps = (
+        normalized["steps"] = (
             self._deduplicate_steps(
                 normalized_steps
             )
         )
-
-        normalized["steps"] = normalized_steps
 
         return normalized
 
@@ -761,7 +1307,6 @@ class AgentPlanner:
         self,
         data: dict[str, Any],
     ) -> dict[str, Any] | None:
-
         for key in (
             "plan",
             "result",
@@ -775,29 +1320,33 @@ class AgentPlanner:
                 value,
                 str,
             ):
-                parsed = self._parse_json_value(
-                    value
-                )
+                try:
+                    value = (
+                        self._parse_json_value(
+                            value
+                        )
+                    )
+                except ValueError:
+                    continue
 
-                if isinstance(
-                    parsed,
+            if (
+                isinstance(
+                    value,
                     dict,
-                ):
-                    value = parsed
-
-            if isinstance(
-                value,
-                dict,
+                )
+                and any(
+                    k in value
+                    for k in (
+                        "steps",
+                        "actions",
+                        "tool_name",
+                        "tool",
+                        "name",
+                        "function",
+                    )
+                )
             ):
-                if (
-                    "steps" in value
-                    or "actions" in value
-                    or "tool_name" in value
-                    or "tool" in value
-                    or "name" in value
-                    or "function" in value
-                ):
-                    return value
+                return value
 
         return None
 
@@ -805,7 +1354,6 @@ class AgentPlanner:
         self,
         value: Any,
     ) -> list[Any] | None:
-
         if value is None:
             return None
 
@@ -841,8 +1389,10 @@ class AgentPlanner:
                 if normalized:
                     return normalized
 
-            candidate = self._step_from_dict(
-                value
+            candidate = (
+                self._step_from_dict(
+                    value
+                )
             )
 
             if candidate is not None:
@@ -893,9 +1443,14 @@ class AgentPlanner:
             if not text:
                 return None
 
-            parsed = self._parse_json_value(
-                text
-            )
+            try:
+                parsed = (
+                    self._parse_json_value(
+                        text
+                    )
+                )
+            except ValueError:
+                parsed = None
 
             if parsed is not None:
                 normalized = (
@@ -914,6 +1469,7 @@ class AgentPlanner:
                     "description": (
                         f"Esegui il tool {text}."
                     ),
+                    "success_criteria": None,
                 }
             ]
 
@@ -923,7 +1479,6 @@ class AgentPlanner:
     def _deduplicate_steps(
         steps: list[Any] | None,
     ) -> list[Any] | None:
-
         if not steps:
             return steps
 
@@ -988,13 +1543,14 @@ class AgentPlanner:
         self,
         value: Any,
     ) -> dict[str, Any] | None:
-
         if isinstance(
             value,
             dict,
         ):
-            direct = self._step_from_dict(
-                value
+            direct = (
+                self._step_from_dict(
+                    value
+                )
             )
 
             if direct is not None:
@@ -1032,24 +1588,31 @@ class AgentPlanner:
             value,
             str,
         ):
-            parsed = self._parse_json_value(
-                value.strip()
-            )
-
-            if parsed is None:
+            try:
+                parsed = (
+                    self._parse_json_value(
+                        value.strip()
+                    )
+                )
+            except ValueError:
                 return None
 
-            return self._extract_step_from_anywhere(
-                parsed
+            return (
+                self._extract_step_from_anywhere(
+                    parsed
+                )
             )
 
         return None
+
+    # ========================================================================
+    # STEP NORMALIZATION
+    # ========================================================================
 
     def _step_from_dict(
         self,
         data: dict[str, Any],
     ) -> dict[str, Any] | None:
-
         tool_name = data.get(
             "tool_name"
         )
@@ -1086,16 +1649,18 @@ class AgentPlanner:
                     "name"
                 )
 
-        if not isinstance(
-            tool_name,
-            str,
+        if (
+            not isinstance(
+                tool_name,
+                str,
+            )
+            or not tool_name.strip()
         ):
             return None
 
-        tool_name = tool_name.strip()
-
-        if not tool_name:
-            return None
+        tool_name = (
+            tool_name.strip()
+        )
 
         arguments = data.get(
             "arguments"
@@ -1111,17 +1676,22 @@ class AgentPlanner:
             arguments,
             str,
         ):
-            parsed_arguments = (
-                self._parse_json_value(
-                    arguments
+            try:
+                parsed_arguments = (
+                    self._parse_json_value(
+                        arguments
+                    )
                 )
-            )
+            except ValueError:
+                parsed_arguments = None
 
             if isinstance(
                 parsed_arguments,
                 dict,
             ):
-                arguments = parsed_arguments
+                arguments = (
+                    parsed_arguments
+                )
 
         if not isinstance(
             arguments,
@@ -1137,25 +1707,32 @@ class AgentPlanner:
             function,
             dict,
         ):
-            function_arguments = function.get(
-                "arguments"
+            function_arguments = (
+                function.get(
+                    "arguments"
+                )
             )
 
             if isinstance(
                 function_arguments,
                 str,
             ):
-                parsed_arguments = (
-                    self._parse_json_value(
-                        function_arguments
+                try:
+                    parsed_arguments = (
+                        self._parse_json_value(
+                            function_arguments
+                        )
                     )
-                )
+                except ValueError:
+                    parsed_arguments = None
 
                 if isinstance(
                     parsed_arguments,
                     dict,
                 ):
-                    arguments = parsed_arguments
+                    arguments = (
+                        parsed_arguments
+                    )
 
         description = data.get(
             "description",
@@ -1186,11 +1763,14 @@ class AgentPlanner:
             "success_criteria": success_criteria,
         }
 
+    # ========================================================================
+    # DECISION
+    # ========================================================================
+
     @staticmethod
     def _normalize_decision(
         value: Any,
     ) -> str:
-
         if isinstance(
             value,
             AgentDecision,
@@ -1204,7 +1784,8 @@ class AgentPlanner:
             return AgentDecision.DONE.value
 
         normalized = (
-            value.strip().lower()
+            value.strip()
+            .lower()
         )
 
         aliases = {
@@ -1229,24 +1810,15 @@ class AgentPlanner:
             AgentDecision.DONE.value,
         )
 
-    @staticmethod
-    def _parse_json_value(
-        value: str,
-    ) -> Any:
-
-        try:
-            return json.loads(
-                value
-            )
-        except json.JSONDecodeError:
-            return None
+    # ========================================================================
+    # BUILD PLAN
+    # ========================================================================
 
     def _build_plan(
         self,
         goal: str,
         data: dict[str, Any],
     ) -> AgentPlan:
-
         returned_goal = data.get(
             "goal",
             goal,
@@ -1315,7 +1887,9 @@ class AgentPlanner:
                 "Il planner ha restituito un piano vuoto."
             )
 
-        steps: list[AgentPlanStep] = []
+        steps: list[
+            AgentPlanStep
+        ] = []
 
         for index, raw_step in enumerate(
             steps_data,
@@ -1331,6 +1905,7 @@ class AgentPlanner:
                     "description": (
                         f"Esegui il tool {raw_step}."
                     ),
+                    "success_criteria": None,
                 }
 
             if not isinstance(
@@ -1341,138 +1916,51 @@ class AgentPlanner:
                     f"Lo step {index} del piano non è valido."
                 )
 
-            tool_name = raw_step.get(
-                "tool_name"
+            normalized = (
+                self._step_from_dict(
+                    raw_step
+                )
             )
 
-            if not isinstance(
-                tool_name,
-                str,
-            ):
-                tool_name = raw_step.get(
-                    "tool"
-                )
-
-            if not isinstance(
-                tool_name,
-                str,
-            ):
-                tool_name = raw_step.get(
-                    "name"
-                )
-
-            if not isinstance(
-                tool_name,
-                str,
-            ):
-                function = raw_step.get(
-                    "function"
-                )
-
-                if isinstance(
-                    function,
-                    dict,
-                ):
-                    tool_name = function.get(
-                        "name"
-                    )
-
-            arguments = raw_step.get(
-                "arguments"
-            )
-
-            if arguments is None:
-                arguments = raw_step.get(
-                    "args",
-                    {},
-                )
-
-            if isinstance(
-                arguments,
-                str,
-            ):
-                parsed_arguments = (
-                    self._parse_json_value(
-                        arguments
-                    )
-                )
-
-                if isinstance(
-                    parsed_arguments,
-                    dict,
-                ):
-                    arguments = parsed_arguments
-
-            if arguments is None:
-                arguments = {}
-
-            description = raw_step.get(
-                "description"
-            )
-
-            if description is None:
-                if isinstance(
-                    tool_name,
-                    str,
-                ):
-                    description = (
-                        f"Esegui il tool {tool_name}."
-                    )
-
-            success_criteria = raw_step.get(
-                "success_criteria"
-            )
-
-            if (
-                success_criteria is not None
-                and not isinstance(
-                    success_criteria,
-                    str,
-                )
-            ):
-                success_criteria = str(
-                    success_criteria
-                )
-
-            if not isinstance(
-                tool_name,
-                str,
-            ):
+            if normalized is None:
                 raise ValueError(
-                    f"Lo step {index} non contiene "
-                    "un tool_name valido."
-                )
-
-            if not isinstance(
-                arguments,
-                dict,
-            ):
-                raise ValueError(
-                    f"Gli argomenti dello step {index} "
-                    "devono essere un oggetto."
-                )
-
-            if not isinstance(
-                description,
-                str,
-            ):
-                raise ValueError(
-                    f"La descrizione dello step {index} "
-                    "non è valida."
+                    (
+                        f"Lo step {index} "
+                        "non contiene un "
+                        "tool_name valido."
+                    )
                 )
 
             steps.append(
                 AgentPlanStep(
-                    tool_name=tool_name,
-                    arguments=arguments,
-                    description=description,
-                    success_criteria=success_criteria,
+                    tool_name=(
+                        normalized[
+                            "tool_name"
+                        ]
+                    ),
+                    arguments=(
+                        normalized[
+                            "arguments"
+                        ]
+                    ),
+                    description=(
+                        normalized[
+                            "description"
+                        ]
+                    ),
+                    success_criteria=(
+                        normalized[
+                            "success_criteria"
+                        ]
+                    ),
                 )
             )
 
         return AgentPlan(
             goal=returned_goal,
-            steps=tuple(steps),
+            steps=tuple(
+                steps
+            ),
             decision=decision,
             message=message,
         )

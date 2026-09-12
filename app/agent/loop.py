@@ -4,11 +4,19 @@ from typing import Any
 
 from app.agent.decision import AgentDecision
 from app.agent.observation import AgentObservation
-from app.agent.planner import AgentPlan, AgentPlanStep, AgentPlanner
-from app.agent.verifier import AgentVerification, AgentVerifier
+from app.agent.planner import (
+    AgentPlan,
+    AgentPlanStep,
+    AgentPlanner,
+)
+from app.agent.verifier import (
+    AgentVerification,
+    AgentVerifier,
+)
 from app.tools.call import ToolCall
 from app.tools.executor import ToolExecutionService
 from app.tools.result import ToolResult
+from app.ui.events import IRISEventBus
 
 
 @dataclass(frozen=True)
@@ -29,7 +37,6 @@ class AgentLoopResult:
     steps: tuple[AgentStepResult, ...]
     observations: tuple[AgentObservation, ...]
 
-    # Metriche runtime.
     total_seconds: float = 0.0
     planning_seconds: float = 0.0
     execution_seconds: float = 0.0
@@ -48,6 +55,7 @@ class AgentLoop:
         execution_service: ToolExecutionService,
         verifier: AgentVerifier | None = None,
         max_steps: int = 8,
+        event_bus: IRISEventBus | None = None,
     ) -> None:
         if max_steps <= 0:
             raise ValueError(
@@ -58,6 +66,10 @@ class AgentLoop:
         self.execution_service = execution_service
         self.verifier = verifier or AgentVerifier()
         self.max_steps = max_steps
+        self.event_bus = (
+            event_bus
+            or IRISEventBus()
+        )
 
     def run(
         self,
@@ -69,6 +81,11 @@ class AgentLoop:
 
         total_start = perf_counter()
 
+        self.event_bus.emit(
+            "agent.started",
+            goal=goal,
+        )
+
         planning_seconds = 0.0
         execution_seconds = 0.0
         verification_seconds = 0.0
@@ -76,17 +93,32 @@ class AgentLoop:
 
         planning_start = perf_counter()
 
+        self.event_bus.emit(
+            "planner.started",
+            goal=goal,
+        )
+
         current_plan = self.planner.plan(
             goal=goal,
             context=context,
             tool_definitions=tool_definitions,
         )
 
-        planning_seconds += (
+        planning_elapsed = (
             perf_counter() - planning_start
         )
 
+        planning_seconds += planning_elapsed
         planner_calls += 1
+
+        self.event_bus.emit(
+            "planner.completed",
+            steps=len(
+                current_plan.steps
+            ),
+            planner_calls=planner_calls,
+            latency_seconds=planning_elapsed,
+        )
 
         executed_steps: list[AgentStepResult] = []
         observations: list[AgentObservation] = []
@@ -97,7 +129,7 @@ class AgentLoop:
                     perf_counter() - total_start
                 )
 
-                return AgentLoopResult(
+                result = AgentLoopResult(
                     goal=goal,
                     decision=current_plan.decision,
                     message=(
@@ -114,6 +146,12 @@ class AgentLoop:
                     planner_calls=planner_calls,
                 )
 
+                self._emit_completed(
+                    result
+                )
+
+                return result
+
             step = current_plan.steps[0]
             step_number = len(executed_steps) + 1
 
@@ -123,6 +161,19 @@ class AgentLoop:
                 call_id=f"agent_step_{step_number}",
             )
 
+            self.event_bus.emit(
+                "permission.checked",
+                tool=step.tool_name,
+                granted=confirmed or True,
+            )
+
+            self.event_bus.emit(
+                "tool.started",
+                tool=step.tool_name,
+                step=step_number,
+                arguments=step.arguments,
+            )
+
             execution_start = perf_counter()
 
             tool_result = self.execution_service.execute_call(
@@ -130,8 +181,26 @@ class AgentLoop:
                 confirmed=confirmed,
             )
 
-            execution_seconds += (
+            execution_elapsed = (
                 perf_counter() - execution_start
+            )
+
+            execution_seconds += execution_elapsed
+
+            self.event_bus.emit(
+                "tool.completed",
+                tool=step.tool_name,
+                step=step_number,
+                success=tool_result.success,
+                output=tool_result.output,
+                error=tool_result.error,
+                latency_seconds=execution_elapsed,
+            )
+
+            self.event_bus.emit(
+                "verification.started",
+                tool=step.tool_name,
+                step=step_number,
             )
 
             verification_start = perf_counter()
@@ -141,8 +210,21 @@ class AgentLoop:
                 success_criteria=step.success_criteria,
             )
 
-            verification_seconds += (
+            verification_elapsed = (
                 perf_counter() - verification_start
+            )
+
+            verification_seconds += (
+                verification_elapsed
+            )
+
+            self.event_bus.emit(
+                "verification.completed",
+                tool=step.tool_name,
+                step=step_number,
+                verified=verification.verified,
+                reason=verification.reason,
+                latency_seconds=verification_elapsed,
             )
 
             observation = AgentObservation(
@@ -166,14 +248,16 @@ class AgentLoop:
                 )
             )
 
-            observations.append(observation)
+            observations.append(
+                observation
+            )
 
             if not verification.verified:
                 total_seconds = (
                     perf_counter() - total_start
                 )
 
-                return AgentLoopResult(
+                result = AgentLoopResult(
                     goal=goal,
                     decision=AgentDecision.ASK_USER,
                     message=(
@@ -190,6 +274,12 @@ class AgentLoop:
                     planner_calls=planner_calls,
                 )
 
+                self._emit_completed(
+                    result
+                )
+
+                return result
+
             remaining_steps = current_plan.steps[1:]
 
             if remaining_steps:
@@ -199,6 +289,7 @@ class AgentLoop:
                     decision=current_plan.decision,
                     message=current_plan.message,
                 )
+
                 continue
 
             if current_plan.decision == AgentDecision.DONE:
@@ -206,7 +297,7 @@ class AgentLoop:
                     perf_counter() - total_start
                 )
 
-                return AgentLoopResult(
+                result = AgentLoopResult(
                     goal=goal,
                     decision=AgentDecision.DONE,
                     message=(
@@ -223,12 +314,18 @@ class AgentLoop:
                     planner_calls=planner_calls,
                 )
 
+                self._emit_completed(
+                    result
+                )
+
+                return result
+
             if current_plan.decision == AgentDecision.ASK_USER:
                 total_seconds = (
                     perf_counter() - total_start
                 )
 
-                return AgentLoopResult(
+                result = AgentLoopResult(
                     goal=goal,
                     decision=AgentDecision.ASK_USER,
                     message=(
@@ -245,13 +342,19 @@ class AgentLoop:
                     planner_calls=planner_calls,
                 )
 
+                self._emit_completed(
+                    result
+                )
+
+                return result
+
             if current_plan.decision == AgentDecision.CONTINUE:
                 if len(executed_steps) >= self.max_steps:
                     total_seconds = (
                         perf_counter() - total_start
                     )
 
-                    return AgentLoopResult(
+                    result = AgentLoopResult(
                         goal=goal,
                         decision=AgentDecision.CONTINUE,
                         message=(
@@ -268,12 +371,23 @@ class AgentLoop:
                         planner_calls=planner_calls,
                     )
 
+                    self._emit_completed(
+                        result
+                    )
+
+                    return result
+
                 current_context = self._build_replan_context(
                     context=context,
                     observations=observations,
                 )
 
                 planning_start = perf_counter()
+
+                self.event_bus.emit(
+                    "planner.started",
+                    goal=goal,
+                )
 
                 current_plan = self.planner.plan(
                     goal=goal,
@@ -282,11 +396,21 @@ class AgentLoop:
                     observations=list(observations),
                 )
 
-                planning_seconds += (
+                planning_elapsed = (
                     perf_counter() - planning_start
                 )
 
+                planning_seconds += planning_elapsed
                 planner_calls += 1
+
+                self.event_bus.emit(
+                    "planner.completed",
+                    steps=len(
+                        current_plan.steps
+                    ),
+                    planner_calls=planner_calls,
+                    latency_seconds=planning_elapsed,
+                )
 
                 continue
 
@@ -299,6 +423,21 @@ class AgentLoop:
                 f"{current_plan.decision!r}"
             )
 
+    def _emit_completed(
+        self,
+        result: AgentLoopResult,
+    ) -> None:
+        self.event_bus.emit(
+            "agent.completed",
+            goal=result.goal,
+            decision=result.decision.value,
+            total_seconds=result.total_seconds,
+            planning_seconds=result.planning_seconds,
+            execution_seconds=result.execution_seconds,
+            verification_seconds=result.verification_seconds,
+            planner_calls=result.planner_calls,
+        )
+
     @staticmethod
     def _build_replan_context(
         context: str | None,
@@ -307,7 +446,9 @@ class AgentLoop:
         parts: list[str] = []
 
         if context:
-            parts.append(context)
+            parts.append(
+                context
+            )
 
         if observations:
             parts.append(
@@ -319,4 +460,6 @@ class AgentLoop:
                 for observation in observations
             )
 
-        return "\n\n".join(parts)
+        return "\n\n".join(
+            parts
+        )

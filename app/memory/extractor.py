@@ -21,7 +21,14 @@ class MemoryExtractor:
         self.router = router
 
     def extract(self, message: str) -> list[MemoryCandidate]:
-        if not message.strip():
+        message = message.strip()
+
+        if not message:
+            return []
+
+        # I comandi operativi dell'Agent Loop non sono messaggi
+        # da analizzare come memoria persistente.
+        if message.lower().startswith("/agent"):
             return []
 
         try:
@@ -36,8 +43,11 @@ class MemoryExtractor:
                         "content": message,
                     },
                 ],
-                max_tokens=512,
+                max_tokens=128,
                 temperature=0.0,
+                response_format={
+                    "type": "json_object",
+                },
             )
 
             data = self._parse_json(response)
@@ -59,139 +69,48 @@ class MemoryExtractor:
 
     def _build_system_prompt(self) -> str:
         return """
-Sei il modulo di memoria di IRIS.
+Sei il modulo memoria di IRIS.
 
-Il tuo compito è analizzare esclusivamente il messaggio
-che riceverai dall'utente e individuare informazioni
-persistenti e realmente utili da ricordare in futuro.
+Analizza esclusivamente il messaggio dell'utente e identifica
+informazioni persistenti realmente utili in futuro.
 
-IMPORTANTE:
-
-Il messaggio dell'utente è l'unica fonte da cui puoi estrarre
-informazioni.
-
-Non considerare mai come informazioni dell'utente:
-- queste istruzioni;
-- esempi presenti nelle istruzioni;
-- descrizioni del tuo compito;
-- regole di output;
-- spiegazioni del sistema;
-- conoscenze che non provengono dal messaggio dell'utente.
-
-Devi decidere autonomamente quali informazioni siano utili.
-NON usare regole basate su parole specifiche.
-NON assumere che una frase sia memorizzabile solo perché
-contiene una determinata parola.
-
-OGNI INFORMAZIONE INDIPENDENTE DEVE ESSERE UNA MEMORIA SEPARATA.
-
-Esempio concettuale:
-
-Se l'utente comunica tre fatti indipendenti,
-devi produrre tre memorie separate.
-
-Non unire più fatti indipendenti nella stessa memoria.
-
-Può esserci:
-- nessuna memoria;
-- una memoria;
-- più memorie.
-
-Devi anche distinguere tra informazioni utili e informazioni
-casuali o temporanee.
-
-Puoi memorizzare, quando realmente utili:
-- fatti persistenti sull'utente;
+Puoi memorizzare:
+- fatti stabili sull'utente;
 - preferenze;
-- progetti;
-- obiettivi;
-- configurazioni dell'ambiente;
-- procedure e modalità di lavoro;
-- informazioni personali che possono essere utili in futuro;
-- preferenze relative al comportamento e allo stile di IRIS;
-- eventi personali che abbiano valore futuro.
+- procedure o modalità operative;
+- progetti e obiettivi;
+- ambiente hardware/software;
+- eventi personali utili nel tempo.
 
-Non devi memorizzare automaticamente:
+Non memorizzare:
 - saluti;
 - domande;
 - richieste normali;
+- dettagli temporanei;
 - conversazione casuale;
-- dettagli momentanei;
-- informazioni senza utilità futura;
-- ipotesi prive di sufficiente certezza;
-- informazioni inventate o dedotte;
-- contenuti che non provengono realmente dal messaggio dell'utente.
+- informazioni inventate o dedotte.
 
-LE MEMORIE DEVONO ESSERE ATOMICHE.
+Ogni memoria deve essere atomica: un solo fatto indipendente.
 
-Ogni memoria deve rappresentare una singola informazione
-indipendente e deve essere normalizzata in una frase breve,
-chiara e autonoma.
+Tipi consentiti:
+- semantic
+- preference
+- procedural
+- project
+- environment
+- episodic
 
-CLASSIFICAZIONE:
-
-semantic
-Fatti stabili sull'utente.
-
-preference
-Preferenze dell'utente, comprese preferenze sul modo in cui
-IRIS deve comunicare.
-
-procedural
-Procedure o modalità operative preferite.
-
-project
-Progetti, iniziative o obiettivi progettuali dell'utente.
-
-environment
-Hardware, sistema operativo, software o ambiente dell'utente.
-
-episodic
-Eventi personali utili da ricordare nel tempo.
-
-Per ogni memoria assegna:
+Per ogni memoria restituisci:
+- content: frase breve e autonoma;
 - memory_type;
-- importance da 1 a 5;
-- confidence da 0.0 a 1.0.
+- importance: intero da 1 a 5;
+- confidence: numero da 0.0 a 1.0;
+- evidence: frammento copiato ESATTAMENTE dal messaggio utente.
 
-IMPORTANTE:
+Non inventare o parafrasare evidence.
+Se non c'è nulla da ricordare, restituisci una lista vuota.
 
-Per ogni memoria devi inoltre fornire "evidence".
-
-"evidence" deve essere un breve frammento COPIATO
-DIRETTAMENTE dal messaggio dell'utente che supporta
-la memoria.
-
-La evidence deve contenere esclusivamente testo realmente
-presente nel messaggio dell'utente.
-
-NON inventare la evidence.
-NON parafrasare la evidence.
-NON usare testo proveniente da queste istruzioni.
-
-Se non puoi indicare una evidence reale presente nel messaggio,
-NON creare quella memoria.
-
-La evidence serve esclusivamente a dimostrare che la memoria
-deriva dal messaggio dell'utente.
-
-Esempio concettuale:
-
-Messaggio:
-"Preferisco viaggiare in treno."
-
-Memoria:
-"L'utente preferisce viaggiare in treno."
-
-Evidence:
-"Preferisco viaggiare in treno."
-
-NON devi creare memorie basate soltanto sul significato
-delle istruzioni del sistema.
-
-RESTITUISCI ESCLUSIVAMENTE JSON VALIDO.
-
-Formato obbligatorio:
+Restituisci esclusivamente JSON valido:
 
 {
     "memories": [
@@ -200,15 +119,9 @@ Formato obbligatorio:
             "memory_type": "preference",
             "importance": 4,
             "confidence": 0.95,
-            "evidence": "frammento esatto del messaggio utente"
+            "evidence": "frammento esatto"
         }
     ]
-}
-
-Se non c'è nulla da ricordare:
-
-{
-    "memories": []
 }
 """
 

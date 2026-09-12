@@ -5,6 +5,9 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from app.tools.application_resolver import (
+    ApplicationResolver,
+)
 from app.tools.base import Tool, ToolDefinition
 from app.tools.permissions import Permission
 from app.tools.result import ToolResult
@@ -12,30 +15,27 @@ from app.tools.result import ToolResult
 
 class OpenApplicationTool(Tool):
     """
-    Apre un'applicazione tramite un comando/path autorizzato.
+    Apre automaticamente un'applicazione presente sul PC.
 
-    Per sicurezza il tool utilizza esclusivamente una allowlist
-    definita nel costruttore.
+    L'applicazione non viene scelta tramite allowlist.
+    Il nome richiesto viene risolto da ApplicationResolver.
     """
 
     def __init__(
         self,
-        allowed_applications: dict[str, str] | None = None,
+        resolver: ApplicationResolver | None = None,
     ) -> None:
 
-        self.allowed_applications = (
-            allowed_applications
-            or {
-                "notepad": "notepad.exe",
-                "calculator": "calc.exe",
-            }
+        self.resolver = (
+            resolver
+            or ApplicationResolver()
         )
 
         self._definition = ToolDefinition(
             name="open_application",
             description=(
-                "Apre un'applicazione presente nella allowlist "
-                "del PC Agent."
+                "Cerca e apre un'applicazione presente "
+                "sul PC riconoscendola dal nome richiesto."
             ),
             input_schema={
                 "type": "object",
@@ -43,7 +43,7 @@ class OpenApplicationTool(Tool):
                     "name": {
                         "type": "string",
                         "description": (
-                            "Nome dell'applicazione autorizzata."
+                            "Nome dell'applicazione da aprire."
                         ),
                     },
                 },
@@ -61,7 +61,9 @@ class OpenApplicationTool(Tool):
         )
 
     @property
-    def definition(self) -> ToolDefinition:
+    def definition(
+        self,
+    ) -> ToolDefinition:
         return self._definition
 
     def execute(
@@ -79,54 +81,152 @@ class OpenApplicationTool(Tool):
         ):
             return ToolResult(
                 success=False,
-                error="Il nome dell'applicazione deve essere una stringa.",
+                error=(
+                    "Il nome dell'applicazione "
+                    "deve essere una stringa."
+                ),
             )
 
-        name = name.strip().lower()
+        name = name.strip()
 
         if not name:
             return ToolResult(
                 success=False,
-                error="Il nome dell'applicazione non può essere vuoto.",
-            )
-
-        command = self.allowed_applications.get(
-            name
-        )
-
-        if command is None:
-            return ToolResult(
-                success=False,
                 error=(
-                    f"L'applicazione '{name}' non è presente "
-                    "nella allowlist."
+                    "Il nome dell'applicazione "
+                    "non può essere vuoto."
                 ),
             )
 
         try:
-            process = subprocess.Popen(
-                [command],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL,
-                shell=False,
+            application = self.resolver.resolve(
+                name
             )
 
-        except OSError as error:
+        except (
+            OSError,
+            ValueError,
+            TypeError,
+        ) as error:
             return ToolResult(
                 success=False,
                 error=(
-                    f"Impossibile aprire '{name}': {error}"
+                    "Errore durante la ricerca "
+                    f"dell'applicazione: {error}"
+                ),
+            )
+
+        if application is None:
+            return ToolResult(
+                success=False,
+                error=(
+                    f"Non riesco a trovare "
+                    f"l'applicazione '{name}' "
+                    "sul PC."
+                ),
+            )
+
+        try:
+            process = self._launch(
+                application
+            )
+
+        except (
+            OSError,
+            subprocess.SubprocessError,
+        ) as error:
+            return ToolResult(
+                success=False,
+                error=(
+                    f"Impossibile aprire "
+                    f"'{application.name}': {error}"
                 ),
             )
 
         return ToolResult(
             success=True,
             output={
-                "application": name,
-                "pid": process.pid,
+                "requested_name": name,
+                "application": application.name,
+                "source": application.source,
+                "target": application.target,
+                "pid": process,
             },
         )
+
+    # ========================================================================
+    # LAUNCH
+    # ========================================================================
+
+    @staticmethod
+    def _launch(
+        application,
+    ) -> int | None:
+
+        # --------------------------------------------------------------------
+        # START MENU .LNK
+        # --------------------------------------------------------------------
+
+        if application.source == "start_menu":
+
+            if os.name != "nt":
+                raise OSError(
+                    "Le scorciatoie Start Menu sono supportate "
+                    "solo su Windows."
+                )
+
+            os.startfile(
+                application.target
+            )
+
+            return None
+
+        # --------------------------------------------------------------------
+        # WINDOWS REGISTERED APP
+        # --------------------------------------------------------------------
+
+        if (
+            application.source
+            == "windows_start_apps"
+        ):
+
+            if os.name != "nt":
+                raise OSError(
+                    "Le applicazioni Windows registrate "
+                    "sono supportate solo su Windows."
+                )
+
+            command = [
+                "explorer.exe",
+                (
+                    "shell:AppsFolder\\"
+                    f"{application.app_id}"
+                ),
+            ]
+
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                shell=False,
+            )
+
+            return process.pid
+
+        # --------------------------------------------------------------------
+        # EXE / REGISTRY / PATH
+        # --------------------------------------------------------------------
+
+        process = subprocess.Popen(
+            [application.target],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            shell=False,
+        )
+
+        return process.pid
 
 
 class ReadFileTool(Tool):
@@ -182,7 +282,9 @@ class ReadFileTool(Tool):
         )
 
     @property
-    def definition(self) -> ToolDefinition:
+    def definition(
+        self,
+    ) -> ToolDefinition:
         return self._definition
 
     def execute(
@@ -210,9 +312,11 @@ class ReadFileTool(Tool):
             )
 
         try:
-            path = Path(
-                raw_path
-            ).expanduser().resolve()
+            path = (
+                Path(raw_path)
+                .expanduser()
+                .resolve()
+            )
 
         except OSError as error:
             return ToolResult(
@@ -250,7 +354,7 @@ class ReadFileTool(Tool):
             return ToolResult(
                 success=False,
                 error=(
-                    f"Impossibile leggere le informazioni "
+                    "Impossibile leggere le informazioni "
                     f"del file: {error}"
                 ),
             )
@@ -384,7 +488,9 @@ class WriteFileTool(Tool):
         )
 
     @property
-    def definition(self) -> ToolDefinition:
+    def definition(
+        self,
+    ) -> ToolDefinition:
         return self._definition
 
     def execute(
@@ -425,9 +531,11 @@ class WriteFileTool(Tool):
             )
 
         try:
-            path = Path(
-                raw_path
-            ).expanduser().resolve()
+            path = (
+                Path(raw_path)
+                .expanduser()
+                .resolve()
+            )
 
         except OSError as error:
             return ToolResult(
@@ -574,7 +682,9 @@ class RunCommandTool(Tool):
         )
 
     @property
-    def definition(self) -> ToolDefinition:
+    def definition(
+        self,
+    ) -> ToolDefinition:
         return self._definition
 
     def execute(

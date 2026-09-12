@@ -1,3 +1,4 @@
+from __future__ import annotations
 
 from typing import Any
 
@@ -49,4 +50,3 @@ class ToolRegistry:
             }
             for tool in self._tools.values()
         ]
-

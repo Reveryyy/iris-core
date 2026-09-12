@@ -1,4 +1,5 @@
 import json
+from time import perf_counter
 from typing import Any
 
 from app.agent.loop import AgentLoop, AgentLoopResult
@@ -9,6 +10,7 @@ from app.memory.extractor import MemoryExtractor
 from app.memory.service import MemoryService
 from app.personality.manager import PersonalityManager
 from app.tools.core import CoreToolHandler
+from app.ui.events import IRISEventBus
 
 
 class IRISCore:
@@ -21,6 +23,7 @@ class IRISCore:
         memory: MemoryService,
         tool_handler: CoreToolHandler | None = None,
         agent_loop: AgentLoop | None = None,
+        event_bus: IRISEventBus | None = None,
     ):
         self.router = router
         self.memory = memory
@@ -37,11 +40,23 @@ class IRISCore:
         self.tool_handler = tool_handler
         self.agent_loop = agent_loop
 
+        self.event_bus = (
+            event_bus
+            or IRISEventBus()
+        )
+
     def chat(
         self,
         message: str,
         confirmed: bool = False,
     ) -> str:
+
+        started = perf_counter()
+
+        self.event_bus.emit(
+            "core.chat.started",
+            message=message,
+        )
 
         self.conversation.add_user_message(
             message
@@ -52,14 +67,34 @@ class IRISCore:
         )
 
         if self.tool_handler is None:
-            return self._generate_normal_response(
+            result = self._generate_normal_response(
                 message
             )
 
-        return self._generate_with_tools(
+            self.event_bus.emit(
+                "core.chat.completed",
+                latency_seconds=(
+                    perf_counter()
+                    - started
+                ),
+            )
+
+            return result
+
+        result = self._generate_with_tools(
             message=message,
             confirmed=confirmed,
         )
+
+        self.event_bus.emit(
+            "core.chat.completed",
+            latency_seconds=(
+                perf_counter()
+                - started
+            ),
+        )
+
+        return result
 
     def run_agent(
         self,
@@ -124,9 +159,20 @@ class IRISCore:
         goal: str,
     ) -> str:
 
+        self.event_bus.emit(
+            "memory.started",
+            operation="agent_context",
+        )
+
         memories = self.memory.search_semantic(
             goal,
             limit=5,
+        )
+
+        self.event_bus.emit(
+            "memory.completed",
+            count=len(memories),
+            operation="agent_context",
         )
 
         memory_context = (
@@ -230,7 +276,9 @@ class IRISCore:
 
         tools = self._get_provider_tools()
 
-        for _ in range(self.MAX_TOOL_ROUNDS):
+        for _ in range(
+            self.MAX_TOOL_ROUNDS
+        ):
 
             messages = self._build_messages(
                 message
@@ -287,6 +335,19 @@ class IRISCore:
 
                 return error_message
 
+            self.event_bus.emit(
+                "permission.checked",
+                tool=tool_call.name,
+                granted=confirmed or True,
+            )
+
+            self.event_bus.emit(
+                "tool.started",
+                tool=tool_call.name,
+                step=1,
+                arguments=tool_call.arguments,
+            )
+
             tool_call_id = tool_call.call_id
 
             if tool_call_id is None:
@@ -313,6 +374,14 @@ class IRISCore:
             )
 
             if tool_result is None:
+                self.event_bus.emit(
+                    "tool.completed",
+                    tool=tool_call.name,
+                    step=1,
+                    success=False,
+                    error="Nessun risultato ricevuto.",
+                )
+
                 self.conversation.add_tool_result(
                     content=(
                         "success=false; "
@@ -324,6 +393,15 @@ class IRISCore:
                 )
 
                 continue
+
+            self.event_bus.emit(
+                "tool.completed",
+                tool=tool_call.name,
+                step=1,
+                success=tool_result.success,
+                output=tool_result.output,
+                error=tool_result.error,
+            )
 
             self.conversation.add_tool_result(
                 content=self._serialize_tool_result(
@@ -423,9 +501,20 @@ class IRISCore:
             self.conversation.to_provider_messages()
         )
 
+        self.event_bus.emit(
+            "memory.started",
+            operation="chat_context",
+        )
+
         memories = self.memory.search_semantic(
             message,
             limit=5,
+        )
+
+        self.event_bus.emit(
+            "memory.completed",
+            count=len(memories),
+            operation="chat_context",
         )
 
         memory_context = (
@@ -549,8 +638,17 @@ class IRISCore:
         message: str,
     ) -> None:
 
+        self.event_bus.emit(
+            "memory.extraction.started"
+        )
+
         candidates = self.memory_extractor.extract(
             message
+        )
+
+        self.event_bus.emit(
+            "memory.extraction.completed",
+            count=len(candidates),
         )
 
         for candidate in candidates:

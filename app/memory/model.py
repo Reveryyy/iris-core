@@ -24,7 +24,7 @@ class Memory(Base):
     )
 
     embedding: Mapped[list[float] | None] = mapped_column(
-        Vector(386),
+        Vector(384),
         nullable=True,
     )
 

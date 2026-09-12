@@ -1,0 +1,12 @@
+{
+  "identity.name": "IRIS",
+  "identity.language": "it",
+  "ui.show_metrics": true,
+  "ui.show_tokens": true,
+  "ui.max_history": 12,
+  "ui.completion_menu": true,
+  "runtime.debug": false,
+  "llm.mode": "auto",
+  "llm.provider": null,
+  "agent.max_steps": 8
+}
