@@ -68,6 +68,45 @@ def _windows_no_console_flags() -> int:
     )
 
 
+def _windows_powershell_executable() -> str:
+    """
+    Restituisce il percorso dell'eseguibile Windows PowerShell.
+
+    Non dipende dal PATH del processo che esegue IRIS.
+    """
+
+    if os.name != "nt":
+        raise OSError(
+            "PowerShell Windows è disponibile solo su Windows."
+        )
+
+    system_root = os.environ.get(
+        "SystemRoot"
+    )
+
+    if not system_root:
+        raise OSError(
+            "La variabile d'ambiente SystemRoot non è disponibile."
+        )
+
+    executable = (
+        Path(system_root)
+        / "System32"
+        / "WindowsPowerShell"
+        / "v1.0"
+        / "powershell.exe"
+    )
+
+    if not executable.exists():
+        raise OSError(
+            f"PowerShell non trovata in '{executable}'."
+        )
+
+    return str(
+        executable
+    )
+
+
 # ============================================================================
 # APPLICATION CONTROL
 # ============================================================================
@@ -630,7 +669,7 @@ class OpenApplicationTool(Tool):
             return []
 
         command = [
-            "powershell.exe",
+            _windows_powershell_executable(),
             "-NoProfile",
             "-NonInteractive",
             "-Command",
