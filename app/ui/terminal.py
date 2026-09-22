@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import shlex
+import textwrap
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from threading import RLock
 from typing import Any, Callable
 
 from prompt_toolkit import Application
@@ -25,8 +27,6 @@ from prompt_toolkit.styles import Style
 from prompt_toolkit.widgets import Frame, TextArea
 
 from rich.console import Console
-from rich.table import Table
-from rich.text import Text
 
 from app.ui.events import IRISEventBus
 from app.ui.state import TerminalState
@@ -46,7 +46,6 @@ SOFT = "#B0B0B0"
 MUTED = "#737373"
 DIM = "#3E3E3E"
 
-# Quasi nessun colore.
 ACCENT = "#D0D0D0"
 ACCENT_2 = "#B8B8B8"
 
@@ -67,14 +66,12 @@ PROMPT_STYLE = Style.from_dict(
             f"{TEXT}"
         ),
 
-        # Header
         "header": TEXT,
         "header.accent": f"bold {ACCENT}",
         "header.muted": MUTED,
         "header.model": SOFT,
         "header.forced": ACCENT,
 
-        # Transcript
         "user": TEXT,
         "user.prompt": f"bold {ACCENT}",
         "iris": TEXT,
@@ -82,7 +79,6 @@ PROMPT_STYLE = Style.from_dict(
         "iris.meta": MUTED,
         "system": MUTED,
 
-        # Composer
         "composer": (
             f"bg:{SURFACE} "
             f"{TEXT}"
@@ -95,18 +91,15 @@ PROMPT_STYLE = Style.from_dict(
             f"bold {ACCENT}"
         ),
 
-        # Bottom hints
         "composer.hint": MUTED,
         "composer.model": SOFT,
         "composer.busy": ACCENT,
 
-        # Help
         "help.border": DIM,
         "help.title": f"bold {TEXT}",
         "help.command": ACCENT,
         "help.description": SOFT,
 
-        # Completion
         "completion-menu": (
             f"bg:{SURFACE_2} "
             f"{TEXT}"
@@ -184,6 +177,7 @@ class IRISCommandCompleter(Completer):
             return
 
         parts = text.split()
+
         current_word = (
             parts[-1]
             if parts
@@ -212,25 +206,14 @@ class TerminalUI:
     """
     UI persistente di IRIS.
 
-    La Application viene creata UNA SOLA VOLTA e resta attiva durante
-    tutta la sessione.
+    Il transcript viene mantenuto integralmente internamente, ma il viewport
+    mostra sempre la coda più recente che entra nello spazio disponibile.
 
-    Struttura:
-
-        HEADER
-
-        transcript
-        transcript
-        transcript
-
-                    spazio libero
-
-        ┌─────────────────────────────────────────────┐
-        │ ›                                           │
-        └─────────────────────────────────────────────┘
-
-          Enter invia · Shift+Tab cambia modello
-                              provider / modello
+    In questo modo:
+    - i messaggi nuovi restano sempre visibili;
+    - quelli vecchi vengono esclusi dalla visualizzazione dall'alto;
+    - il transcript non viene realmente perso;
+    - la UI si comporta come un log a scorrimento verso il basso.
     """
 
     def __init__(
@@ -261,6 +244,8 @@ class TerminalUI:
             TranscriptItem
         ] = []
 
+        self._state_lock = RLock()
+
         self._application: Application | None = None
         self._input_box: TextArea | None = None
 
@@ -272,6 +257,16 @@ class TerminalUI:
         self._busy = False
         self._help_visible = False
         self._should_exit = False
+
+        self._active_chat_callback: Callable[
+            [str],
+            Any,
+        ] | None = None
+
+        self._active_agent_callback: Callable[
+            [str],
+            Any,
+        ] | None = None
 
     # ========================================================================
     # START
@@ -285,10 +280,10 @@ class TerminalUI:
     # ========================================================================
 
     def _on_event(self, event) -> None:
-        self.state.apply(event)
+        with self._state_lock:
+            self.state.apply(event)
 
-        if self._application is not None:
-            self._application.invalidate()
+        self._invalidate()
 
     # ========================================================================
     # MAIN SESSION
@@ -299,11 +294,10 @@ class TerminalUI:
         chat_callback: Callable[[str], Any],
         agent_callback: Callable[[str], Any],
     ) -> None:
-        """
-        Avvia l'unica Application full-screen di IRIS.
-
-        L'Application rimane viva mentre il Core lavora in background.
-        """
+        self.set_callbacks(
+            chat_callback=chat_callback,
+            agent_callback=agent_callback,
+        )
 
         application, input_box = (
             self._build_application()
@@ -346,17 +340,11 @@ class TerminalUI:
             style="class:composer.input",
             multiline=False,
             wrap_lines=False,
+            get_line_prefix=self._transcript_line_prefix,
             scrollbar=False,
             completer=IRISCommandCompleter(),
             complete_while_typing=True,
         )
-
-        # Il composer è in fondo alla UI: il menu dei completamenti
-        # deve aprirsi sopra il campo invece che sotto.
-        
-        # --------------------------------------------------------------------
-        # ENTER
-        # --------------------------------------------------------------------
 
         @bindings.add("enter")
         def _submit(event) -> None:
@@ -366,9 +354,7 @@ class TerminalUI:
             if self._help_visible:
                 return
 
-            value = (
-                input_box.text.strip()
-            )
+            value = input_box.text.strip()
 
             if not value:
                 return
@@ -379,24 +365,18 @@ class TerminalUI:
                 value
             )
 
-        # --------------------------------------------------------------------
-        # ESC
-        # --------------------------------------------------------------------
-
         @bindings.add("escape")
         def _escape(event) -> None:
             if self._help_visible:
-                self._help_visible = False
+                with self._state_lock:
+                    self._help_visible = False
+
                 event.app.invalidate()
                 return
 
             if input_box.text:
                 input_box.text = ""
                 event.app.invalidate()
-
-        # --------------------------------------------------------------------
-        # CTRL+C
-        # --------------------------------------------------------------------
 
         @bindings.add("c-c")
         def _cancel(event) -> None:
@@ -406,31 +386,14 @@ class TerminalUI:
             input_box.text = ""
             event.app.invalidate()
 
-        # --------------------------------------------------------------------
-        # SHIFT+TAB
-        # --------------------------------------------------------------------
-
         @bindings.add("s-tab")
         def _toggle_model(event) -> None:
             if self._busy:
                 return
 
-            # IMPORTANTISSIMO:
-            # Non aggiungiamo alcun messaggio al transcript.
             self._toggle_model_state_only()
 
             event.app.invalidate()
-
-        # --------------------------------------------------------------------
-        # SLASH COMPLETION
-        # --------------------------------------------------------------------
-        #
-        # prompt_toolkit normalmente gestisce la digitazione di "/" con
-        # l'inserimento standard del carattere.
-        #
-        # Qui intercettiamo solamente "/" per aprire immediatamente il
-        # completion menu. Tutto il resto della tastiera rimane invariato.
-        #
 
         @bindings.add("/")
         def _slash_completion(event) -> None:
@@ -446,10 +409,6 @@ class TerminalUI:
                 complete_event=None,
             )
 
-        # --------------------------------------------------------------------
-        # HEADER
-        # --------------------------------------------------------------------
-
         header = Window(
             content=FormattedTextControl(
                 self._header_text,
@@ -459,23 +418,16 @@ class TerminalUI:
             always_hide_cursor=True,
         )
 
-        # --------------------------------------------------------------------
-        # TRANSCRIPT
-        # --------------------------------------------------------------------
-
         transcript = Window(
             content=FormattedTextControl(
                 self._transcript_text,
             ),
             style="class:root",
             wrap_lines=True,
+            get_line_prefix=self._transcript_line_prefix,
             always_hide_cursor=True,
             dont_extend_height=False,
         )
-
-        # --------------------------------------------------------------------
-        # COMPOSER
-        # --------------------------------------------------------------------
 
         composer = Frame(
             input_box,
@@ -501,10 +453,6 @@ class TerminalUI:
             ]
         )
 
-        # --------------------------------------------------------------------
-        # FOOTER
-        # --------------------------------------------------------------------
-
         footer_row = VSplit(
             [
                 Window(
@@ -524,10 +472,6 @@ class TerminalUI:
             ]
         )
 
-        # --------------------------------------------------------------------
-        # HELP OVERLAY
-        # --------------------------------------------------------------------
-
         help_window = Window(
             content=FormattedTextControl(
                 self._help_text,
@@ -539,7 +483,6 @@ class TerminalUI:
 
         root = HSplit(
             [
-                # Top breathing room
                 Window(
                     height=Dimension.exact(1),
                     char=" ",
@@ -547,7 +490,6 @@ class TerminalUI:
                     always_hide_cursor=True,
                 ),
 
-                # Header
                 VSplit(
                     [
                         Window(
@@ -560,7 +502,6 @@ class TerminalUI:
                     ]
                 ),
 
-                # Header spacing
                 Window(
                     height=Dimension.exact(2),
                     char=" ",
@@ -568,7 +509,6 @@ class TerminalUI:
                     always_hide_cursor=True,
                 ),
 
-                # Main body
                 VSplit(
                     [
                         Window(
@@ -587,7 +527,6 @@ class TerminalUI:
                     ]
                 ),
 
-                # Breathing room before composer
                 Window(
                     height=Dimension.exact(2),
                     char=" ",
@@ -595,19 +534,17 @@ class TerminalUI:
                     always_hide_cursor=True,
                 ),
 
-                # Composer
                 composer_row,
 
-                # Footer
                 Window(
                     height=Dimension.exact(1),
                     char=" ",
                     style="class:root",
                     always_hide_cursor=True,
                 ),
+
                 footer_row,
 
-                # Bottom breathing room
                 Window(
                     height=Dimension.exact(1),
                     char=" ",
@@ -617,19 +554,7 @@ class TerminalUI:
             ]
         )
 
-        # Help is rendered over transcript by changing the control content.
-        # We don't rebuild the application when it opens/closes.
-
-        # --------------------------------------------------------------------
-        # FLOAT CONTAINER PER IL MENU DI COMPLETAMENTO
-        # --------------------------------------------------------------------
-        #
-        # FIX: senza un FloatContainer + CompletionsMenu, buffer.start_completion()
-        # calcola le completions ma non esiste nessun elemento nel layout che
-        # le disegni a schermo. Questo è il motivo per cui il menu "/" non
-        # appariva mai. Il resto della UI (root) resta identico.
-        #
-
+        # Manteniamo invariato il sistema di completamento.
         root_with_completion_menu = FloatContainer(
             content=root,
             floats=[
@@ -680,25 +605,28 @@ class TerminalUI:
 
             return
 
-        if self._busy:
-            return
+        with self._state_lock:
+            if self._busy:
+                return
 
-        self.transcript.append(
-            TranscriptItem(
-                kind="user",
-                text=value,
+            self.transcript.append(
+                TranscriptItem(
+                    kind="user",
+                    text=value,
+                )
             )
-        )
 
-        self._busy = True
-        self.state.reset_runtime()
+            self._busy = True
+            self.state.reset_runtime()
 
         self._invalidate()
+
+        application = self._application
 
         self._executor.submit(
             self._run_chat,
             value,
-            self._application,
+            application,
         )
 
     # ========================================================================
@@ -712,33 +640,36 @@ class TerminalUI:
     ) -> None:
         try:
             response = self._call_safely(
-                lambda: self._active_chat_callback(
+                lambda: self._active_chat_callback_or_raise(
                     message
                 )
             )
 
-            self.transcript.append(
-                TranscriptItem(
-                    kind="iris",
-                    text=str(response),
-                    status="done",
+            with self._state_lock:
+                self.transcript.append(
+                    TranscriptItem(
+                        kind="iris",
+                        text=str(response),
+                        status="done",
+                    )
                 )
-            )
 
         except Exception as error:
-            self.transcript.append(
-                TranscriptItem(
-                    kind="iris",
-                    text=(
-                        "Errore: "
-                        f"{error}"
-                    ),
-                    status="error",
+            with self._state_lock:
+                self.transcript.append(
+                    TranscriptItem(
+                        kind="iris",
+                        text=(
+                            "Errore: "
+                            f"{error}"
+                        ),
+                        status="error",
+                    )
                 )
-            )
 
         finally:
-            self._busy = False
+            with self._state_lock:
+                self._busy = False
 
             if application is not None:
                 application.invalidate()
@@ -754,7 +685,7 @@ class TerminalUI:
     ) -> None:
         try:
             result = self._call_safely(
-                lambda: self._active_agent_callback(
+                lambda: self._active_agent_callback_or_raise(
                     goal
                 )
             )
@@ -837,29 +768,32 @@ class TerminalUI:
                 else str(decision_value)
             )
 
-            self.transcript.append(
-                TranscriptItem(
-                    kind="iris",
-                    text=str(message),
-                    status=status,
-                    meta=meta,
+            with self._state_lock:
+                self.transcript.append(
+                    TranscriptItem(
+                        kind="iris",
+                        text=str(message),
+                        status=status,
+                        meta=meta,
+                    )
                 )
-            )
 
         except Exception as error:
-            self.transcript.append(
-                TranscriptItem(
-                    kind="iris",
-                    text=(
-                        "Errore Agent Loop: "
-                        f"{error}"
-                    ),
-                    status="error",
+            with self._state_lock:
+                self.transcript.append(
+                    TranscriptItem(
+                        kind="iris",
+                        text=(
+                            "Errore Agent Loop: "
+                            f"{error}"
+                        ),
+                        status="error",
+                    )
                 )
-            )
 
         finally:
-            self._busy = False
+            with self._state_lock:
+                self._busy = False
 
             if application is not None:
                 application.invalidate()
@@ -881,6 +815,32 @@ class TerminalUI:
             agent_callback
         )
 
+    def _active_chat_callback_or_raise(
+        self,
+        message: str,
+    ) -> Any:
+        callback = self._active_chat_callback
+
+        if callback is None:
+            raise RuntimeError(
+                "Chat callback non configurata."
+            )
+
+        return callback(message)
+
+    def _active_agent_callback_or_raise(
+        self,
+        goal: str,
+    ) -> Any:
+        callback = self._active_agent_callback
+
+        if callback is None:
+            raise RuntimeError(
+                "Agent callback non configurata."
+            )
+
+        return callback(goal)
+
     # ========================================================================
     # SAFE CALLBACK
     # ========================================================================
@@ -898,29 +858,32 @@ class TerminalUI:
     def _header_text(
         self,
     ) -> FormattedText:
-        mode = (
-            "FORCED"
-            if self.router.forced_provider
-            else "AUTO"
-        )
+        with self._state_lock:
+            mode = (
+                "FORCED"
+                if self.router.forced_provider
+                else "AUTO"
+            )
 
-        provider = (
-            self.state.provider
-            if self.state.provider != "-"
-            else self._current_provider_display()
-        )
+            provider = (
+                self.state.provider
+                if self.state.provider != "-"
+                else self._current_provider_display()
+            )
 
-        model = (
-            self.state.model
-            if self.state.model != "-"
-            else self._current_model_display()
-        )
+            model = (
+                self.state.model
+                if self.state.model != "-"
+                else self._current_model_display()
+            )
 
-        task = (
-            self.state.task
-            if self.state.task != "-"
-            else "general"
-        )
+            task = (
+                self.state.task
+                if self.state.task != "-"
+                else "general"
+            )
+
+            busy = self._busy
 
         mode_style = (
             "class:header.forced"
@@ -930,7 +893,7 @@ class TerminalUI:
 
         busy_fragment = (
             "  ·  WORKING"
-            if self._busy
+            if busy
             else ""
         )
 
@@ -982,16 +945,28 @@ class TerminalUI:
     def _transcript_text(
         self,
     ) -> FormattedText:
-        if self._help_visible:
+        with self._state_lock:
+            help_visible = self._help_visible
+            transcript = list(
+                self.transcript
+            )
+
+        if help_visible:
             return self._help_text()
+
+        visible_items = (
+            self._get_visible_transcript_items(
+                transcript
+            )
+        )
 
         fragments: list[
             tuple[str, str]
         ] = []
 
-        items = self.transcript[-18:]
-
-        for index, item in enumerate(items):
+        for index, item in enumerate(
+            visible_items
+        ):
             if index > 0:
                 fragments.append(
                     (
@@ -1020,19 +995,6 @@ class TerminalUI:
                     or ""
                 )
 
-                if status == "done":
-                    status_style = (
-                        "class:iris.meta"
-                    )
-                elif status == "error":
-                    status_style = (
-                        "class:iris.meta"
-                    )
-                else:
-                    status_style = (
-                        "class:iris.meta"
-                    )
-
                 fragments.extend(
                     [
                         (
@@ -1044,21 +1006,24 @@ class TerminalUI:
                             "  ",
                         ),
                         (
-                            status_style,
+                            "class:iris.meta",
                             status,
                         ),
                         (
                             "class:root",
                             "\n",
                         ),
-                        (
-                            "class:iris",
-                            self._indent_text(
-                                item.text,
-                                6,
-                            ),
-                        ),
                     ]
+                )
+
+                fragments.append(
+                    (
+                        "class:iris",
+                        self._format_wrapped_text(
+                            item.text,
+                            6,
+                        ),
+                    )
                 )
 
                 if item.meta:
@@ -1070,7 +1035,7 @@ class TerminalUI:
                             ),
                             (
                                 "class:iris.meta",
-                                self._indent_text(
+                                self._format_wrapped_text(
                                     item.meta,
                                     6,
                                 ),
@@ -1087,7 +1052,10 @@ class TerminalUI:
                         ),
                         (
                             "class:system",
-                            item.text,
+                            self._format_wrapped_text(
+                                item.text,
+                                6,
+                            ),
                         ),
                     ]
                 )
@@ -1120,6 +1088,311 @@ class TerminalUI:
         )
 
     # ========================================================================
+    # TRANSCRIPT VIEWPORT
+    # ========================================================================
+
+    def _get_visible_transcript_items(
+        self,
+        transcript: list[TranscriptItem],
+    ) -> list[TranscriptItem]:
+        """
+        Restituisce solamente la coda del transcript che entra nello
+        spazio disponibile.
+
+        Il transcript completo resta in memoria.
+
+        Si parte dall'ultimo messaggio e si risale verso il passato:
+        quando non c'è più spazio, i messaggi più vecchi vengono esclusi
+        dalla visualizzazione.
+
+        Questo crea un comportamento equivalente a un log con autoscroll.
+        """
+
+        if not transcript:
+            return []
+
+        available_rows = self._get_transcript_available_rows()
+        available_width = self._get_transcript_available_width()
+
+        selected_reversed: list[TranscriptItem] = []
+        used_rows = 0
+
+        # Il live activity occupa alcune righe quando IRIS sta lavorando.
+        live_rows = (
+            0
+            if not self._busy
+            else 4
+        )
+
+        usable_rows = max(
+            3,
+            available_rows - live_rows,
+        )
+
+        for item in reversed(
+            transcript
+        ):
+            item_rows = (
+                self._estimate_transcript_item_rows(
+                    item=item,
+                    width=available_width,
+                )
+            )
+
+            separator_rows = (
+                2
+                if selected_reversed
+                else 0
+            )
+
+            required_rows = (
+                item_rows
+                + separator_rows
+            )
+
+            if (
+                selected_reversed
+                and used_rows + required_rows > usable_rows
+            ):
+                break
+
+            # Se un singolo messaggio è più grande dell'intero viewport,
+            # lo manteniamo comunque: il wrapping mostrerà almeno la parte
+            # finale disponibile del contenuto.
+            if (
+                not selected_reversed
+                and item_rows > usable_rows
+            ):
+                selected_reversed.append(
+                    item
+                )
+                break
+
+            selected_reversed.append(
+                item
+            )
+
+            used_rows += required_rows
+
+            if used_rows >= usable_rows:
+                break
+
+        selected_reversed.reverse()
+
+        return selected_reversed
+
+    def _get_transcript_available_rows(
+        self,
+    ) -> int:
+        """
+        Stima l'altezza reale disponibile alla zona transcript.
+
+        Il layout contiene header, spaziatori, composer e footer fissi.
+        Il transcript occupa il restante spazio.
+        """
+
+        application = self._application
+
+        if application is None:
+            return 12
+
+        try:
+            output = application.output
+            size = output.get_size()
+
+            total_rows = int(
+                size.rows
+            )
+
+            # Componenti verticali fissi del layout:
+            #
+            # 1  top spacer
+            # 1  header
+            # 2  header spacer
+            # 2  transcript outer spacing
+            # 2  bottom transcript spacer
+            # 1  footer top spacer
+            # 1  footer
+            # 1  footer bottom spacer
+            #
+            # Il composer occupa almeno circa 3 righe a seconda della
+            # dimensione del terminale.
+            fixed_rows = 12
+
+            rows = (
+                total_rows
+                - fixed_rows
+            )
+
+            return max(
+                3,
+                rows,
+            )
+
+        except Exception:
+            return 12
+
+    def _get_transcript_available_width(
+        self,
+    ) -> int:
+        application = self._application
+
+        if application is None:
+            return 80
+
+        try:
+            output = application.output
+            size = output.get_size()
+
+            total_columns = int(
+                size.columns
+            )
+
+            # Margini laterali del transcript.
+            width = (
+                total_columns
+                - 8
+            )
+
+            return max(
+                24,
+                width,
+            )
+
+        except Exception:
+            return 80
+
+    @classmethod
+    def _estimate_transcript_item_rows(
+        cls,
+        item: TranscriptItem,
+        width: int,
+    ) -> int:
+        """
+        Stima quante righe visive occupa un elemento del transcript.
+
+        La stima considera:
+        - indentazione;
+        - wrapping;
+        - status;
+        - meta;
+        - righe vuote interne.
+        """
+
+        width = max(
+            20,
+            width,
+        )
+
+        if item.kind == "user":
+            content_width = max(
+                12,
+                width - 6,
+            )
+
+            return (
+                1
+                + cls._wrapped_line_count(
+                    item.text,
+                    content_width,
+                )
+                - 1
+            )
+
+        if item.kind == "iris":
+            text_width = max(
+                12,
+                width - 6,
+            )
+
+            rows = 2
+
+            rows += cls._wrapped_line_count(
+                item.text,
+                text_width,
+            )
+
+            if item.meta:
+                rows += 1
+
+                rows += cls._wrapped_line_count(
+                    item.meta,
+                    text_width,
+                )
+
+            return rows
+
+        if item.kind == "system":
+            text_width = max(
+                12,
+                width - 6,
+            )
+
+            return (
+                cls._wrapped_line_count(
+                    item.text,
+                    text_width,
+                )
+                + 1
+            )
+
+        return max(
+            1,
+            cls._wrapped_line_count(
+                item.text,
+                max(
+                    12,
+                    width - 4,
+                ),
+            ),
+        )
+
+    @staticmethod
+    def _wrapped_line_count(
+        text: str,
+        width: int,
+    ) -> int:
+        """
+        Conta quante righe occuperà un testo dopo il wrapping.
+
+        Le newline vengono mantenute.
+        """
+
+        if not text:
+            return 1
+
+        width = max(
+            1,
+            width,
+        )
+
+        total = 0
+
+        for line in str(text).splitlines() or [""]:
+            if not line:
+                total += 1
+                continue
+
+            wrapped = textwrap.wrap(
+                line,
+                width=width,
+                replace_whitespace=False,
+                drop_whitespace=False,
+                break_long_words=True,
+                break_on_hyphens=False,
+            )
+
+            total += max(
+                1,
+                len(wrapped),
+            )
+
+        return max(
+            1,
+            total,
+        )
+
+    # ========================================================================
     # LIVE ACTIVITY
     # ========================================================================
 
@@ -1128,13 +1401,21 @@ class TerminalUI:
     ) -> list[
         tuple[str, str]
     ]:
-        if not self._busy:
-            return []
+        with self._state_lock:
+            if not self._busy:
+                return []
 
-        activity = (
-            self.state.activity
-            or "IRIS sta lavorando..."
-        )
+            activity = (
+                self.state.activity
+                or "IRIS sta lavorando..."
+            )
+
+            detail = self.state.detail
+            tool_name = self.state.tool_name
+            tool_status = self.state.tool_status
+            total_steps = self.state.total_steps
+
+            current_step = self.state.current_step
 
         fragments = [
             (
@@ -1147,7 +1428,7 @@ class TerminalUI:
             ),
         ]
 
-        if self.state.detail:
+        if detail:
             fragments.extend(
                 [
                     (
@@ -1156,15 +1437,15 @@ class TerminalUI:
                     ),
                     (
                         "class:iris.meta",
-                        self._indent_text(
-                            self.state.detail,
+                        self._format_wrapped_text(
+                            detail,
                             6,
                         ),
                     ),
                 ]
             )
 
-        if self.state.tool_name:
+        if tool_name:
             fragments.extend(
                 [
                     (
@@ -1173,12 +1454,12 @@ class TerminalUI:
                     ),
                     (
                         "class:iris.meta",
-                        self._indent_text(
+                        self._format_wrapped_text(
                             (
-                                self.state.tool_name
+                                tool_name
                                 + "  "
                                 + (
-                                    self.state.tool_status
+                                    tool_status
                                     or "running"
                                 )
                             ),
@@ -1188,7 +1469,7 @@ class TerminalUI:
                 ]
             )
 
-        if self.state.total_steps:
+        if total_steps:
             fragments.extend(
                 [
                     (
@@ -1197,8 +1478,11 @@ class TerminalUI:
                     ),
                     (
                         "class:iris.meta",
-                        self._indent_text(
-                            self._step_text(),
+                        self._format_wrapped_text(
+                            self._step_text_from_values(
+                                current_step=current_step,
+                                total_steps=total_steps,
+                            ),
                             6,
                         ),
                     ),
@@ -1214,19 +1498,22 @@ class TerminalUI:
     def _composer_footer_text(
         self,
     ) -> FormattedText:
-        provider = (
-            self.state.provider
-            if self.state.provider != "-"
-            else self._current_provider_display()
-        )
+        with self._state_lock:
+            provider = (
+                self.state.provider
+                if self.state.provider != "-"
+                else self._current_provider_display()
+            )
 
-        model = (
-            self.state.model
-            if self.state.model != "-"
-            else self._current_model_display()
-        )
+            model = (
+                self.state.model
+                if self.state.model != "-"
+                else self._current_model_display()
+            )
 
-        if self._busy:
+            busy = self._busy
+
+        if busy:
             return FormattedText(
                 [
                     (
@@ -1345,44 +1632,41 @@ class TerminalUI:
     def _toggle_model_state_only(
         self,
     ) -> None:
-        if self.router.forced_provider is None:
-            available = [
-                provider
-                for provider
-                in self.router.providers
-                if getattr(
+        with self._state_lock:
+            if self.router.forced_provider is None:
+                available = [
+                    provider
+                    for provider
+                    in self.router.providers
+                    if getattr(
+                        provider,
+                        "name",
+                        "",
+                    ) != "gemma"
+                ]
+
+                if not available:
+                    available = list(
+                        self.router.providers
+                    )
+
+                if not available:
+                    return
+
+                provider = available[0]
+
+                name = getattr(
                     provider,
                     "name",
-                    "",
-                ) != "gemma"
-            ]
-
-            if not available:
-                available = list(
-                    self.router.providers
+                    provider.__class__.__name__,
                 )
 
-            if not available:
-                return
+                self.router.set_forced_provider(
+                    name
+                )
 
-            provider = available[0]
-
-            name = getattr(
-                provider,
-                "name",
-                provider.__class__.__name__,
-            )
-
-            self.router.set_forced_provider(
-                name
-            )
-
-        else:
-            self.router.clear_forced_provider()
-
-        # Nessun transcript.
-        # Nessun messaggio.
-        # Solo lo stato cambia.
+            else:
+                self.router.clear_forced_provider()
 
     # ========================================================================
     # SLASH COMMANDS
@@ -1415,7 +1699,9 @@ class TerminalUI:
             return "exit"
 
         if command == "/help":
-            self._help_visible = True
+            with self._state_lock:
+                self._help_visible = True
+
             self._invalidate()
             return "handled"
 
@@ -1448,14 +1734,17 @@ class TerminalUI:
             return "handled"
 
         if command == "/debug":
-            self.debug_enabled = (
-                not self.debug_enabled
-            )
+            with self._state_lock:
+                self.debug_enabled = (
+                    not self.debug_enabled
+                )
+
+                enabled = self.debug_enabled
 
             self._append_system(
                 (
                     "Debug ON"
-                    if self.debug_enabled
+                    if enabled
                     else "Debug OFF"
                 )
             )
@@ -1463,14 +1752,17 @@ class TerminalUI:
             return "handled"
 
         if command == "/clear":
-            self.transcript.clear()
-            self.state.reset_runtime()
-            self._help_visible = False
+            with self._state_lock:
+                self.transcript.clear()
+                self.state.reset_runtime()
+                self._help_visible = False
+
             self._invalidate()
             return "handled"
 
         if command == "/reset":
-            self.state.reset_runtime()
+            with self._state_lock:
+                self.state.reset_runtime()
 
             self._append_system(
                 "Stato runtime resettato."
@@ -1518,25 +1810,28 @@ class TerminalUI:
         self,
         goal: str,
     ) -> None:
-        if self._busy:
-            return
+        with self._state_lock:
+            if self._busy:
+                return
 
-        self.transcript.append(
-            TranscriptItem(
-                kind="user",
-                text=f"/agent {goal}",
+            self.transcript.append(
+                TranscriptItem(
+                    kind="user",
+                    text=f"/agent {goal}",
+                )
             )
-        )
 
-        self._busy = True
-        self.state.reset_runtime()
+            self._busy = True
+            self.state.reset_runtime()
 
         self._invalidate()
+
+        application = self._application
 
         self._executor.submit(
             self._run_agent,
             goal,
-            self._application,
+            application,
         )
 
     # ========================================================================
@@ -1547,12 +1842,13 @@ class TerminalUI:
         self,
         message: str,
     ) -> None:
-        self.transcript.append(
-            TranscriptItem(
-                kind="system",
-                text=message,
+        with self._state_lock:
+            self.transcript.append(
+                TranscriptItem(
+                    kind="system",
+                    text=message,
+                )
             )
-        )
 
         self._invalidate()
 
@@ -1697,29 +1993,45 @@ class TerminalUI:
         )
 
     def _show_status(self) -> None:
+        with self._state_lock:
+            provider = self.state.provider
+            model = self.state.model
+            task = self.state.task
+            phase = self.state.phase
+            tool_name = self.state.tool_name
+            verification_status = (
+                self.state.verification_status
+            )
+
         self._append_system(
             "  ".join(
                 [
-                    f"provider={self.state.provider}",
-                    f"model={self.state.model}",
-                    f"task={self.state.task}",
-                    f"phase={self.state.phase}",
-                    f"tool={self.state.tool_name or '-'}",
+                    f"provider={provider}",
+                    f"model={model}",
+                    f"task={task}",
+                    f"phase={phase}",
+                    f"tool={tool_name or '-'}",
                     (
                         "verify="
-                        f"{self.state.verification_status}"
+                        f"{verification_status}"
                     ),
                 ]
             )
         )
 
     def _show_context(self) -> None:
+        with self._state_lock:
+            input_tokens = self.state.input_tokens
+            output_tokens = self.state.output_tokens
+            total_tokens = self.state.total_tokens
+            context_text = self._context_text()
+
         self._append_system(
             (
-                f"input={self.state.input_tokens or '-'}  "
-                f"output={self.state.output_tokens or '-'}  "
-                f"total={self.state.total_tokens or '-'}  "
-                f"context={self._context_text()}"
+                f"input={input_tokens or '-'}  "
+                f"output={output_tokens or '-'}  "
+                f"total={total_tokens or '-'}  "
+                f"context={context_text}"
             )
         )
 
@@ -1752,10 +2064,13 @@ class TerminalUI:
         )
 
     def _show_memory(self) -> None:
+        with self._state_lock:
+            memory_hits = self.state.memory_hits
+
         self._append_system(
             (
                 "memory hits="
-                f"{self.state.memory_hits}  "
+                f"{memory_hits}  "
                 "status=connected"
             )
         )
@@ -1796,13 +2111,16 @@ class TerminalUI:
             else "AUTO"
         )
 
+        with self._state_lock:
+            debug = self.debug_enabled
+
         self._append_system(
             (
                 f"mode={mode}  "
                 f"forced_provider="
                 f"{self.router.forced_provider or '-'}  "
                 f"debug="
-                f"{'ON' if self.debug_enabled else 'OFF'}  "
+                f"{'ON' if debug else 'OFF'}  "
                 f"tools="
                 f"{len(self.tool_registry.definitions())}  "
                 f"providers="
@@ -1834,18 +2152,31 @@ class TerminalUI:
     # ========================================================================
 
     def _invalidate(self) -> None:
-        if self._application is not None:
-            self._application.invalidate()
+        application = self._application
+
+        if application is not None:
+            application.invalidate()
 
     def _step_text(self) -> str:
-        if not self.state.total_steps:
+        with self._state_lock:
+            return self._step_text_from_values(
+                current_step=self.state.current_step,
+                total_steps=self.state.total_steps,
+            )
+
+    @staticmethod
+    def _step_text_from_values(
+        current_step,
+        total_steps,
+    ) -> str:
+        if not total_steps:
             return ""
 
         return (
             "step "
-            f"{self.state.current_step or 0}"
+            f"{current_step or 0}"
             "/"
-            f"{self.state.total_steps}"
+            f"{total_steps}"
         )
 
     def _context_text(self) -> str:
@@ -1909,18 +2240,66 @@ class TerminalUI:
             return "-"
 
     @staticmethod
-    def _indent_text(
+    def _format_wrapped_text(
         text: str,
         spaces: int,
     ) -> str:
+        """
+        Prepara il testo per il rendering del transcript.
+
+        Le righe generate manualmente mantengono sempre la stessa
+        indentazione della prima riga, evitando che il wrapping
+        automatico di prompt_toolkit riporti le continuazioni
+        verso il margine sinistro.
+        """
+
         prefix = " " * spaces
+
+        if not text:
+            return prefix
 
         lines = text.splitlines()
 
         if not lines:
             return prefix
 
+        formatted_lines: list[str] = []
+
+        for line in lines:
+            if not line:
+                formatted_lines.append(
+                    prefix.rstrip()
+                )
+                continue
+
+            formatted_lines.append(
+                prefix + line
+            )
+
         return "\n".join(
-            prefix + line
-            for line in lines
+            formatted_lines
         )
+
+    @staticmethod
+    def _indent_text(
+        text: str,
+        spaces: int,
+    ) -> str:
+        """
+        Compatibilità con il resto della UI.
+        """
+
+        return TerminalUI._format_wrapped_text(
+            text,
+            spaces,
+        )
+
+    def _transcript_line_prefix(
+        self,
+        lineno: int,
+        wrap_count: int,
+    ) -> str:
+        if wrap_count > 0:
+            return "      "
+
+        return ""

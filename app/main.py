@@ -6,6 +6,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+
 # ============================================================================
 # DIRECT SCRIPT SUPPORT
 # ============================================================================
@@ -47,7 +48,6 @@ from app.memory.local_embedding import (
 )
 from app.memory.manager import MemoryManager
 from app.memory.service import MemoryService
-from app.tools.application_resolver import ApplicationResolver
 from app.tools.builtin import EchoTool
 from app.tools.core import CoreToolHandler
 from app.tools.dispatcher import ToolDispatcher
@@ -57,6 +57,9 @@ from app.tools.pc import (
     ReadFileTool,
     RunCommandTool,
     WriteFileTool,
+)
+from app.tools.pc_discovery import (
+    DiscoverPCStateTool,
 )
 from app.tools.pc_gui import TypeTextTool
 from app.tools.pc_keyboard import PressKeyTool
@@ -84,10 +87,7 @@ def _add_optional_provider(
     provider_factory,
     key_env: str,
 ) -> None:
-
-    if not os.getenv(
-        key_env
-    ):
+    if not os.getenv(key_env):
         return
 
     try:
@@ -109,7 +109,6 @@ def _add_optional_provider(
 # ============================================================================
 
 def main() -> None:
-
     load_dotenv()
 
     event_bus = IRISEventBus()
@@ -154,9 +153,7 @@ def main() -> None:
         providers,
         lambda: OpenAICompatibleProvider(
             name="groq",
-            base_url=(
-                "https://api.groq.com/openai/v1"
-            ),
+            base_url="https://api.groq.com/openai/v1",
             api_key_env="GROQ_API_KEY",
             model="qwen/qwen3.8-27b",
             timeout=60.0,
@@ -254,21 +251,23 @@ def main() -> None:
     iris_directory = Path.cwd()
 
     # ========================================================================
-    # APPLICATION RESOLVER
+    # APPLICATION CONTROL
     # ========================================================================
-
-    application_resolver = (
-        ApplicationResolver()
-    )
 
     tool_registry.register(
-        OpenApplicationTool(
-            resolver=application_resolver,
-        )
+        OpenApplicationTool()
     )
 
     # ========================================================================
-    # PC WINDOW / STATE
+    # PC DISCOVERY
+    # ========================================================================
+
+    tool_registry.register(
+        DiscoverPCStateTool()
+    )
+
+    # ========================================================================
+    # WINDOW CONTROL
     # ========================================================================
 
     tool_registry.register(
@@ -288,7 +287,7 @@ def main() -> None:
     )
 
     # ========================================================================
-    # SCREENSHOT
+    # SCREEN / GUI
     # ========================================================================
 
     tool_registry.register(
@@ -296,10 +295,6 @@ def main() -> None:
             allowed_root=iris_directory,
         )
     )
-
-    # ========================================================================
-    # GUI
-    # ========================================================================
 
     tool_registry.register(
         TypeTextTool()
@@ -334,21 +329,11 @@ def main() -> None:
     )
 
     # ========================================================================
-    # COMMANDS
+    # COMMAND EXECUTION
     # ========================================================================
 
     tool_registry.register(
-        RunCommandTool(
-            allowed_commands={
-                "python_version": [
-                    "python",
-                    "--version",
-                ],
-                "whoami": [
-                    "whoami",
-                ],
-            }
-        )
+        RunCommandTool()
     )
 
     # ========================================================================
@@ -413,7 +398,6 @@ def main() -> None:
     # ========================================================================
 
     with SessionLocal() as db:
-
         embedding_provider = (
             LocalEmbeddingProvider()
         )
@@ -454,9 +438,7 @@ def main() -> None:
                 core.chat(message)
             ),
             agent_callback=lambda goal: (
-                core.run_agent(
-                    goal=goal
-                )
+                core.run_agent(goal=goal)
             ),
         )
 
@@ -469,9 +451,7 @@ def main() -> None:
                 core.chat(message)
             ),
             agent_callback=lambda goal: (
-                core.run_agent(
-                    goal=goal
-                )
+                core.run_agent(goal=goal)
             ),
         )
 

@@ -5,6 +5,7 @@ import re
 import subprocess
 import unicodedata
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from pathlib import Path
 
 
@@ -33,7 +34,32 @@ class ApplicationResolver:
     5. Eseguibili presenti nel PATH
 
     Non utilizza una allowlist hardcoded.
+
+    La risoluzione supporta anche piccoli errori di digitazione,
+    abbreviazioni e variazioni innocue del nome.
     """
+
+    FUZZY_THRESHOLD = 0.82
+    FUZZY_MIN_QUERY_LENGTH = 5
+    FUZZY_MIN_MARGIN = 0.04
+
+    _IGNORED_WORDS = frozenset(
+        {
+            "il",
+            "lo",
+            "la",
+            "i",
+            "gli",
+            "le",
+            "un",
+            "uno",
+            "una",
+            "l",
+            "app",
+            "applicazione",
+            "programma",
+        }
+    )
 
     def __init__(self) -> None:
         self._cache: list[ResolvedApplication] | None = None
@@ -48,6 +74,14 @@ class ApplicationResolver:
     ) -> ResolvedApplication | None:
         """
         Cerca l'applicazione richiesta.
+
+        Strategia:
+
+        1. match esatto
+        2. match esatto senza estensione
+        3. match parziale
+        4. match inverso
+        5. fuzzy matching per piccoli errori
         """
 
         if not isinstance(
@@ -140,6 +174,18 @@ class ApplicationResolver:
             )
 
             return candidates[0]
+
+        # --------------------------------------------------------------------
+        # FUZZY MATCH
+        # --------------------------------------------------------------------
+
+        fuzzy_match = self._find_fuzzy_match(
+            query=query,
+            applications=applications,
+        )
+
+        if fuzzy_match is not None:
+            return fuzzy_match
 
         return None
 
@@ -473,6 +519,188 @@ class ApplicationResolver:
 
             except OSError:
                 continue
+
+    # ========================================================================
+    # FUZZY MATCHING
+    # ========================================================================
+
+    def _find_fuzzy_match(
+        self,
+        query: str,
+        applications: list[ResolvedApplication],
+    ) -> ResolvedApplication | None:
+
+        normalized_query = self._normalize_fuzzy(
+            query
+        )
+
+        if len(normalized_query) < self.FUZZY_MIN_QUERY_LENGTH:
+            return None
+
+        scored: list[
+            tuple[
+                float,
+                ResolvedApplication,
+            ]
+        ] = []
+
+        for application in applications:
+            candidates = {
+                self._normalize_fuzzy(
+                    application.name
+                )
+            }
+
+            stem = Path(
+                application.name
+            ).stem
+
+            candidates.add(
+                self._normalize_fuzzy(
+                    stem
+                )
+            )
+
+            best_score = 0.0
+
+            for candidate in candidates:
+
+                if not candidate:
+                    continue
+
+                score = self._fuzzy_score(
+                    normalized_query,
+                    candidate,
+                )
+
+                if score > best_score:
+                    best_score = score
+
+            if (
+                best_score
+                >= self.FUZZY_THRESHOLD
+            ):
+                scored.append(
+                    (
+                        best_score,
+                        application,
+                    )
+                )
+
+        if not scored:
+            return None
+
+        scored.sort(
+            key=lambda item: (
+                -item[0],
+                *self._candidate_sort_key(
+                    item[1]
+                ),
+            )
+        )
+
+        best_score, best_application = (
+            scored[0]
+        )
+
+        if len(scored) == 1:
+            return best_application
+
+        second_score = scored[1][0]
+
+        # Se due applicazioni sono quasi equivalenti,
+        # non facciamo una scelta arbitraria.
+        if (
+            best_score
+            - second_score
+            < self.FUZZY_MIN_MARGIN
+        ):
+            return None
+
+        return best_application
+
+    @classmethod
+    def _fuzzy_score(
+        cls,
+        query: str,
+        candidate: str,
+    ) -> float:
+
+        if not query or not candidate:
+            return 0.0
+
+        direct_ratio = SequenceMatcher(
+            None,
+            query,
+            candidate,
+        ).ratio()
+
+        query_tokens = query.split()
+        candidate_tokens = candidate.split()
+
+        if not query_tokens or not candidate_tokens:
+            return direct_ratio
+
+        token_scores: list[float] = []
+
+        for query_token in query_tokens:
+
+            best_token_score = 0.0
+
+            for candidate_token in candidate_tokens:
+                score = SequenceMatcher(
+                    None,
+                    query_token,
+                    candidate_token,
+                ).ratio()
+
+                if score > best_token_score:
+                    best_token_score = score
+
+            token_scores.append(
+                best_token_score
+            )
+
+        token_ratio = sum(
+            token_scores
+        ) / len(
+            token_scores
+        )
+
+        return max(
+            direct_ratio,
+            (
+                direct_ratio
+                + token_ratio
+            )
+            / 2.0,
+        )
+
+    @classmethod
+    def _normalize_fuzzy(
+        cls,
+        value: str,
+    ) -> str:
+
+        value = cls._normalize(
+            value
+        )
+
+        value = re.sub(
+            r"[^a-z0-9]+",
+            " ",
+            value,
+        )
+
+        words = [
+            word
+            for word in value.split()
+            if word not in cls._IGNORED_WORDS
+        ]
+
+        return " ".join(
+            words
+        )
 
     # ========================================================================
     # HELPERS

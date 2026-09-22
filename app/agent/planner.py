@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -151,13 +152,18 @@ class AgentPlanner:
         type_text
 
     invece di fermarsi alla prima azione.
+
+    Quando il modello non riesce a produrre un piano valido, il Planner
+    dispone inoltre di fallback generici per richieste semplici e
+    chiaramente interpretabili. I fallback non contengono nomi di
+    applicazioni hardcoded.
     """
 
-    MAX_FORMAT_ATTEMPTS = 2
-    MAX_TOOL_VALIDATION_ATTEMPTS = 3
+    MAX_FORMAT_ATTEMPTS = 3
+    MAX_TOOL_VALIDATION_ATTEMPTS = 4
 
-    SINGLE_STEP_MAX_TOKENS = 320
-    MULTI_STEP_MAX_TOKENS = 768
+    SINGLE_STEP_MAX_TOKENS = 384
+    MULTI_STEP_MAX_TOKENS = 1024
 
     def __init__(
         self,
@@ -189,13 +195,17 @@ class AgentPlanner:
                 "L'obiettivo non può essere vuoto."
             )
 
+        available_tools = tool_definitions or []
+
         system_content = self._build_system_prompt(
-            tool_definitions=tool_definitions,
+            tool_definitions=available_tools,
             context=context,
             observations=observations,
         )
 
-        base_messages: list[dict[str, Any]] = [
+        base_messages: list[
+            dict[str, Any]
+        ] = [
             {
                 "role": "system",
                 "content": system_content,
@@ -232,23 +242,54 @@ class AgentPlanner:
             and validation_attempt
             < self.MAX_TOOL_VALIDATION_ATTEMPTS
         ):
-            response = self.router.generate(
-                messages,
-                max_tokens=planning_max_tokens,
-                temperature=0.0,
-                response_format={
-                    "type": "json_object",
-                    "schema": self._build_plan_schema(
-                        tool_definitions=tool_definitions,
-                        minimum_steps=(
-                            2
-                            if is_multi_step
-                            else 1
+            try:
+                response = self.router.generate(
+                    messages,
+                    max_tokens=planning_max_tokens,
+                    temperature=0.0,
+                    response_format={
+                        "type": "json_object",
+                        "schema": self._build_plan_schema(
+                            tool_definitions=available_tools,
+                            minimum_steps=(
+                                2
+                                if is_multi_step
+                                else 1
+                            ),
                         ),
-                    ),
-                },
-                task="agent",
-            )
+                    },
+                    task="agent",
+                )
+
+            except Exception as error:
+                last_error = error
+
+                format_attempt += 1
+
+                if (
+                    format_attempt
+                    >= self.MAX_FORMAT_ATTEMPTS
+                ):
+                    break
+
+                messages = list(
+                    base_messages
+                )
+
+                messages.insert(
+                    0,
+                    {
+                        "role": "system",
+                        "content": (
+                            "Si è verificato un errore durante "
+                            "la generazione del piano.\n"
+                            "Genera nuovamente il piano completo.\n"
+                            "Non aggiungere spiegazioni fuori dal JSON."
+                        ),
+                    },
+                )
+
+                continue
 
             try:
                 data = self._decode_response(
@@ -268,7 +309,7 @@ class AgentPlanner:
                 validation_error = (
                     self._validate_plan_against_tools(
                         plan,
-                        tool_definitions or [],
+                        available_tools,
                     )
                 )
 
@@ -277,9 +318,7 @@ class AgentPlanner:
                         self._validate_plan_coverage(
                             goal=goal,
                             plan=plan,
-                            tool_definitions=(
-                                tool_definitions or []
-                            ),
+                            tool_definitions=available_tools,
                         )
                     )
 
@@ -323,9 +362,16 @@ class AgentPlanner:
                             "azioni separate.\n"
                             "Mantieni l'ordine logico delle azioni.\n"
                             "Per un obiettivo che richiede aprire "
-                            "un'applicazione, portarla in primo piano "
-                            "e interagirci, pianifica tutti gli step "
-                            "necessari.\n"
+                            "un'applicazione, usa open_application "
+                            "con il nome richiesto anche se non sai "
+                            "se l'applicazione sia installata: sarà "
+                            "il tool a determinarlo.\n"
+                            "Non trasformare una semplice incertezza "
+                            "sull'esistenza dell'app in ask_user.\n"
+                            "Le azioni già eseguite e verificate "
+                            "nelle OSSERVAZIONI fanno parte dello "
+                            "stato corrente e non devono essere "
+                            "ripetute, salvo richiesta esplicita.\n"
                             "Non dichiarare decision=done finché "
                             "l'intero obiettivo non è coperto.\n\n"
                             f"Errore di validazione: "
@@ -364,11 +410,49 @@ class AgentPlanner:
                             "Genera nuovamente il piano completo.\n"
                             "Scomponi l'obiettivo in tutte le azioni "
                             "necessarie.\n"
+                            "Per richieste come 'apri X' devi "
+                            "produrre uno step open_application "
+                            "con arguments={\"name\":\"X\"}.\n"
+                            "Per richieste come 'apri X e poi Y' "
+                            "devi produrre due step distinti "
+                            "open_application mantenendo l'ordine.\n"
+                            "Se X non esiste, non devi saperlo "
+                            "durante il planning: sarà il tool "
+                            "a verificarlo.\n"
+                            "Per 'seleziona tutto' usa "
+                            "press_key con key='CTRL+A'.\n"
+                            "Per 'cancella il testo' o 'elimina il "
+                            "testo', quando non hai prova che il "
+                            "contenuto sia già selezionato, usa "
+                            "CTRL+A seguito da DELETE.\n"
+                            "Per 'scrivi', 'digita' o 'inserisci' "
+                            "testo usa type_text.\n"
+                            "Non ripetere azioni già eseguite e "
+                            "verificate nelle OSSERVAZIONI, salvo "
+                            "richiesta esplicita dell'utente.\n"
                             "Restituisci esclusivamente JSON valido, "
                             "senza markdown e senza campi extra."
                         ),
                     },
                 )
+
+        fallback_plan = self._build_fallback_plan(
+            goal=goal,
+            tool_definitions=available_tools,
+        )
+
+        if fallback_plan is not None:
+            return fallback_plan
+
+        gui_fallback_plan = (
+            self._build_gui_control_fallback(
+                goal=goal,
+                tool_definitions=available_tools,
+            )
+        )
+
+        if gui_fallback_plan is not None:
+            return gui_fallback_plan
 
         if last_error is not None:
             raise ValueError(
@@ -381,6 +465,314 @@ class AgentPlanner:
         )
 
     # ========================================================================
+    # APPLICATION FALLBACK
+    # ========================================================================
+
+    def _build_fallback_plan(
+        self,
+        goal: str,
+        tool_definitions: list[dict[str, Any]],
+    ) -> AgentPlan | None:
+        """
+        Costruisce un piano minimo quando l'LLM non riesce a farlo.
+
+        Il fallback è volutamente ristretto:
+        - apertura di una singola applicazione;
+        - apertura di più applicazioni in sequenza.
+
+        Non contiene una allowlist di applicazioni e non sostituisce
+        il Planner LLM generale.
+        """
+
+        tool_names = {
+            str(
+                definition.get(
+                    "name"
+                )
+            )
+            for definition in tool_definitions
+            if isinstance(
+                definition,
+                dict,
+            )
+        }
+
+        if "open_application" not in tool_names:
+            return None
+
+        applications = (
+            self._extract_application_open_requests(
+                goal
+            )
+        )
+
+        if not applications:
+            return None
+
+        steps: list[
+            AgentPlanStep
+        ] = []
+
+        for application_name in applications:
+            steps.append(
+                AgentPlanStep(
+                    tool_name="open_application",
+                    arguments={
+                        "name": application_name,
+                    },
+                    description=(
+                        f"Apri l'applicazione "
+                        f"'{application_name}'."
+                    ),
+                    success_criteria=(
+                        f"L'applicazione "
+                        f"'{application_name}' "
+                        "risulta effettivamente "
+                        "in esecuzione oppure il "
+                        "tool segnala esplicitamente "
+                        "che era già aperta."
+                    ),
+                )
+            )
+
+        return AgentPlan(
+            goal=goal,
+            steps=tuple(
+                steps
+            ),
+            decision=AgentDecision.DONE,
+            message=None,
+        )
+
+    @classmethod
+    def _extract_application_open_requests(
+        cls,
+        goal: str,
+    ) -> list[str]:
+        """
+        Estrae nomi di applicazioni da richieste del tipo:
+
+            apri Discord
+            apri VS Code e poi Discord
+            avvia Opera, poi VS Code
+
+        Non contiene nomi applicativi hardcoded.
+        """
+
+        normalized = (
+            goal.strip()
+        )
+
+        if not normalized:
+            return []
+
+        match = re.match(
+            r"^\s*(?:/agent\s+)?"
+            r"(?:apri|avvia|lancia|esegui)\s+"
+            r"(.+?)\s*$",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+
+        if match is None:
+            return []
+
+        remainder = match.group(
+            1
+        ).strip()
+
+        if not remainder:
+            return []
+
+        remainder = re.sub(
+            r"\s+e\s+poi\s+",
+            "\n",
+            remainder,
+            flags=re.IGNORECASE,
+        )
+
+        remainder = re.sub(
+            r"\s+poi\s+",
+            "\n",
+            remainder,
+            flags=re.IGNORECASE,
+        )
+
+        remainder = re.sub(
+            r",\s*poi\s+",
+            "\n",
+            remainder,
+            flags=re.IGNORECASE,
+        )
+
+        remainder = re.sub(
+            r";\s*",
+            "\n",
+            remainder,
+        )
+
+        parts = [
+            part.strip()
+            for part in remainder.splitlines()
+            if part.strip()
+        ]
+
+        if not parts:
+            return []
+
+        cleaned: list[str] = []
+
+        for part in parts:
+            value = part.strip()
+
+            value = re.sub(
+                r"^(?:e\s+)?(?:poi\s+)",
+                "",
+                value,
+                flags=re.IGNORECASE,
+            )
+
+            value = re.sub(
+                r"\s+(?:e|poi)\s*$",
+                "",
+                value,
+                flags=re.IGNORECASE,
+            )
+
+            value = value.strip(
+                " ,.;"
+            )
+
+            if value:
+                cleaned.append(
+                    value
+                )
+
+        return cleaned
+
+    # ========================================================================
+    # GUI FALLBACK
+    # ========================================================================
+
+    def _build_gui_control_fallback(
+        self,
+        goal: str,
+        tool_definitions: list[dict[str, Any]],
+    ) -> AgentPlan | None:
+        """
+        Fallback per alcune intenzioni GUI atomiche e non ambigue.
+
+        Non dipende da applicazioni specifiche.
+        """
+
+        tool_names = {
+            str(
+                definition.get(
+                    "name"
+                )
+            )
+            for definition in tool_definitions
+            if isinstance(
+                definition,
+                dict,
+            )
+        }
+
+        if "press_key" not in tool_names:
+            return None
+
+        normalized = (
+            goal.strip()
+            .lower()
+        )
+
+        normalized = re.sub(
+            r"^\s*/agent\s+",
+            "",
+            normalized,
+        )
+
+        normalized = re.sub(
+            r"\s+",
+            " ",
+            normalized,
+        ).strip()
+
+        if normalized in {
+            "seleziona tutto",
+            "seleziona tutto il testo",
+            "seleziona tutto il contenuto",
+        }:
+            return AgentPlan(
+                goal=goal,
+                steps=(
+                    AgentPlanStep(
+                        tool_name="press_key",
+                        arguments={
+                            "key": "CTRL+A",
+                        },
+                        description=(
+                            "Seleziona tutto il contenuto "
+                            "della finestra attiva."
+                        ),
+                        success_criteria=(
+                            "Il contenuto della finestra attiva "
+                            "risulta selezionato."
+                        ),
+                    ),
+                ),
+                decision=AgentDecision.DONE,
+                message=None,
+            )
+
+        if normalized in {
+            "cancella il testo",
+            "elimina il testo",
+            "cancella tutto il testo",
+            "elimina tutto il testo",
+            "cancella tutto",
+            "elimina tutto",
+            "cancella il contenuto",
+            "elimina il contenuto",
+        }:
+            return AgentPlan(
+                goal=goal,
+                steps=(
+                    AgentPlanStep(
+                        tool_name="press_key",
+                        arguments={
+                            "key": "CTRL+A",
+                        },
+                        description=(
+                            "Seleziona tutto il contenuto "
+                            "prima della cancellazione."
+                        ),
+                        success_criteria=(
+                            "Tutto il contenuto della finestra "
+                            "attiva è stato selezionato."
+                        ),
+                    ),
+                    AgentPlanStep(
+                        tool_name="press_key",
+                        arguments={
+                            "key": "DELETE",
+                        },
+                        description=(
+                            "Cancella il contenuto selezionato."
+                        ),
+                        success_criteria=(
+                            "Il contenuto precedentemente "
+                            "selezionato è stato eliminato."
+                        ),
+                    ),
+                ),
+                decision=AgentDecision.DONE,
+                message=None,
+            )
+
+        return None
+
+    # ========================================================================
     # SCHEMA
     # ========================================================================
 
@@ -389,7 +781,10 @@ class AgentPlanner:
         tool_definitions: list[dict[str, Any]] | None,
         minimum_steps: int = 1,
     ) -> dict[str, Any]:
-        argument_properties: dict[str, Any] = {}
+        argument_properties: dict[
+            str,
+            Any,
+        ] = {}
 
         for definition in (
             tool_definitions or []
@@ -548,8 +943,28 @@ class AgentPlanner:
             "- decision=continue quando dopo gli step eseguiti "
             "servirà ulteriore pianificazione;\n"
             "- decision=ask_user quando manca un'informazione "
-            "necessaria;\n"
+            "necessaria per scegliere correttamente un'azione;\n"
+            "- l'esistenza o meno di un programma installato NON "
+            "è da sola una ragione per usare ask_user: quando "
+            "l'utente chiede di aprire un'app, pianifica "
+            "open_application e lascia che il tool verifichi "
+            "se l'app esiste;\n"
+            "- le OSSERVAZIONI rappresentano lo stato reale "
+            "dell'esecuzione precedente;\n"
+            "- un'azione con success=True e verified=True "
+            "è già completata e non deve essere ripetuta "
+            "durante il replan, salvo richiesta esplicita "
+            "dell'utente;\n"
             "- non produrre campi extra.\n\n"
+
+            "SEMANTICA GUI:\n"
+            "- 'seleziona tutto' -> press_key con key='CTRL+A';\n"
+            "- 'cancella il testo' o 'elimina il testo' -> "
+            "se non hai prova che il testo sia già selezionato, "
+            "usa prima CTRL+A e poi DELETE;\n"
+            "- 'scrivi', 'digita' o 'inserisci' testo -> type_text;\n"
+            "- non usare type_text per premere tasti o combinazioni;\n"
+            "- non usare press_key per inserire testo arbitrario.\n\n"
 
             "ESEMPIO DI DECOMPOSIZIONE:\n"
             "Obiettivo: 'apri il blocco note, portalo in primo piano "
@@ -559,8 +974,27 @@ class AgentPlanner:
             "2. focus_window\n"
             "3. type_text\n\n"
 
-            "NON è corretto produrre solo open_application e "
-            "dichiarare l'obiettivo completato.\n"
+            "Obiettivo: 'apri VS Code e poi Discord'\n"
+            "Piano corretto:\n"
+            "1. open_application con name='VS Code'\n"
+            "2. open_application con name='Discord'\n\n"
+
+            "Obiettivo: 'apri un programma che potrebbe non essere "
+            "installato'\n"
+            "Piano corretto:\n"
+            "1. open_application con il nome richiesto\n\n"
+
+            "Obiettivo: 'seleziona tutto il testo'\n"
+            "Piano corretto:\n"
+            "1. press_key con key='CTRL+A'\n\n"
+
+            "Obiettivo: 'cancella il testo'\n"
+            "Piano corretto:\n"
+            "1. press_key con key='CTRL+A'\n"
+            "2. press_key con key='DELETE'\n\n"
+
+            "NON è corretto produrre solo il primo step di un "
+            "obiettivo composto e dichiararlo completato.\n"
         )
 
         if tool_definitions:
@@ -675,7 +1109,9 @@ class AgentPlanner:
                 )
             )
 
-        return "\n".join(lines)
+        return "\n".join(
+            lines
+        )
 
     # ========================================================================
     # OBSERVATIONS
@@ -715,9 +1151,13 @@ class AgentPlanner:
                         f"; output={output}"
                     )
 
-            lines.append(line)
+            lines.append(
+                line
+            )
 
-        return "\n".join(lines)
+        return "\n".join(
+            lines
+        )
 
     # ========================================================================
     # TEXT HELPERS
@@ -801,15 +1241,31 @@ class AgentPlanner:
             "ferma ",
             "vai ",
             "manda ",
+            "seleziona ",
+            "cancella ",
+            "elimina ",
         )
 
         action_count = sum(
             1
-            for marker in action_markers
+            for marker
+            in action_markers
             if marker in normalized
         )
 
         if action_count >= 2:
+            return True
+
+        if normalized in {
+            "cancella il testo",
+            "elimina il testo",
+            "cancella tutto il testo",
+            "elimina tutto il testo",
+            "cancella tutto",
+            "elimina tutto",
+            "cancella il contenuto",
+            "elimina il contenuto",
+        }:
             return True
 
         return len(normalized) >= 100
@@ -935,12 +1391,7 @@ class AgentPlanner:
         """
         Controllo leggero e generalista sulla copertura dell'obiettivo.
 
-        Non cerca frasi hardcoded del tipo:
-            "scrivici" -> type_text
-
-        ma usa le descrizioni/nome dei tool e il numero di azioni
-        individuate nel goal per evitare che un obiettivo chiaramente
-        composto venga dichiarato done con un singolo step.
+        Non contiene nomi specifici di applicazioni.
         """
 
         if not self._looks_like_multi_step_goal(
@@ -1156,6 +1607,7 @@ class AgentPlanner:
             start = content.find(
                 "{"
             )
+
             end = content.rfind(
                 "}"
             )
@@ -1964,3 +2416,10 @@ class AgentPlanner:
             decision=decision,
             message=message,
         )
+
+
+__all__ = [
+    "AgentPlanStep",
+    "AgentPlan",
+    "AgentPlanner",
+]

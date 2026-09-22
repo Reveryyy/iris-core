@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import json
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
@@ -105,7 +108,8 @@ class AgentLoop:
         )
 
         planning_elapsed = (
-            perf_counter() - planning_start
+            perf_counter()
+            - planning_start
         )
 
         planning_seconds += planning_elapsed
@@ -120,25 +124,36 @@ class AgentLoop:
             latency_seconds=planning_elapsed,
         )
 
-        executed_steps: list[AgentStepResult] = []
-        observations: list[AgentObservation] = []
+        executed_steps: list[
+            AgentStepResult
+        ] = []
+
+        observations: list[
+            AgentObservation
+        ] = []
 
         while True:
             if not current_plan.steps:
                 total_seconds = (
-                    perf_counter() - total_start
+                    perf_counter()
+                    - total_start
                 )
 
                 result = AgentLoopResult(
                     goal=goal,
                     decision=current_plan.decision,
-                    message=(
-                        current_plan.message
-                        or "Il piano non contiene azioni da eseguire."
+                    message=self._build_final_message(
+                        goal=goal,
+                        plan=current_plan,
+                        steps=executed_steps,
                     ),
                     plan=current_plan,
-                    steps=tuple(executed_steps),
-                    observations=tuple(observations),
+                    steps=tuple(
+                        executed_steps
+                    ),
+                    observations=tuple(
+                        observations
+                    ),
                     total_seconds=total_seconds,
                     planning_seconds=planning_seconds,
                     execution_seconds=execution_seconds,
@@ -153,12 +168,17 @@ class AgentLoop:
                 return result
 
             step = current_plan.steps[0]
-            step_number = len(executed_steps) + 1
+            step_number = (
+                len(executed_steps)
+                + 1
+            )
 
             tool_call = ToolCall(
                 name=step.tool_name,
                 arguments=step.arguments,
-                call_id=f"agent_step_{step_number}",
+                call_id=(
+                    f"agent_step_{step_number}"
+                ),
             )
 
             self.event_bus.emit(
@@ -176,16 +196,21 @@ class AgentLoop:
 
             execution_start = perf_counter()
 
-            tool_result = self.execution_service.execute_call(
-                tool_call=tool_call,
-                confirmed=confirmed,
+            tool_result = (
+                self.execution_service.execute_call(
+                    tool_call=tool_call,
+                    confirmed=confirmed,
+                )
             )
 
             execution_elapsed = (
-                perf_counter() - execution_start
+                perf_counter()
+                - execution_start
             )
 
-            execution_seconds += execution_elapsed
+            execution_seconds += (
+                execution_elapsed
+            )
 
             self.event_bus.emit(
                 "tool.completed",
@@ -203,7 +228,9 @@ class AgentLoop:
                 step=step_number,
             )
 
-            verification_start = perf_counter()
+            verification_start = (
+                perf_counter()
+            )
 
             verification = self.verifier.verify(
                 result=tool_result,
@@ -211,7 +238,8 @@ class AgentLoop:
             )
 
             verification_elapsed = (
-                perf_counter() - verification_start
+                perf_counter()
+                - verification_start
             )
 
             verification_seconds += (
@@ -254,19 +282,25 @@ class AgentLoop:
 
             if not verification.verified:
                 total_seconds = (
-                    perf_counter() - total_start
+                    perf_counter()
+                    - total_start
                 )
 
                 result = AgentLoopResult(
                     goal=goal,
                     decision=AgentDecision.ASK_USER,
                     message=(
-                        "L'azione non ha superato la verifica. "
+                        "L'azione non ha superato "
+                        "la verifica. "
                         f"{verification.reason}"
                     ),
                     plan=current_plan,
-                    steps=tuple(executed_steps),
-                    observations=tuple(observations),
+                    steps=tuple(
+                        executed_steps
+                    ),
+                    observations=tuple(
+                        observations
+                    ),
                     total_seconds=total_seconds,
                     planning_seconds=planning_seconds,
                     execution_seconds=execution_seconds,
@@ -280,7 +314,9 @@ class AgentLoop:
 
                 return result
 
-            remaining_steps = current_plan.steps[1:]
+            remaining_steps = (
+                current_plan.steps[1:]
+            )
 
             if remaining_steps:
                 current_plan = AgentPlan(
@@ -292,21 +328,30 @@ class AgentLoop:
 
                 continue
 
-            if current_plan.decision == AgentDecision.DONE:
+            if (
+                current_plan.decision
+                == AgentDecision.DONE
+            ):
                 total_seconds = (
-                    perf_counter() - total_start
+                    perf_counter()
+                    - total_start
                 )
 
                 result = AgentLoopResult(
                     goal=goal,
                     decision=AgentDecision.DONE,
-                    message=(
-                        current_plan.message
-                        or "Operazione completata e verificata."
+                    message=self._build_final_message(
+                        goal=goal,
+                        plan=current_plan,
+                        steps=executed_steps,
                     ),
                     plan=current_plan,
-                    steps=tuple(executed_steps),
-                    observations=tuple(observations),
+                    steps=tuple(
+                        executed_steps
+                    ),
+                    observations=tuple(
+                        observations
+                    ),
                     total_seconds=total_seconds,
                     planning_seconds=planning_seconds,
                     execution_seconds=execution_seconds,
@@ -320,9 +365,13 @@ class AgentLoop:
 
                 return result
 
-            if current_plan.decision == AgentDecision.ASK_USER:
+            if (
+                current_plan.decision
+                == AgentDecision.ASK_USER
+            ):
                 total_seconds = (
-                    perf_counter() - total_start
+                    perf_counter()
+                    - total_start
                 )
 
                 result = AgentLoopResult(
@@ -333,8 +382,12 @@ class AgentLoop:
                         or "Serve un intervento dell'utente."
                     ),
                     plan=current_plan,
-                    steps=tuple(executed_steps),
-                    observations=tuple(observations),
+                    steps=tuple(
+                        executed_steps
+                    ),
+                    observations=tuple(
+                        observations
+                    ),
                     total_seconds=total_seconds,
                     planning_seconds=planning_seconds,
                     execution_seconds=execution_seconds,
@@ -348,10 +401,16 @@ class AgentLoop:
 
                 return result
 
-            if current_plan.decision == AgentDecision.CONTINUE:
-                if len(executed_steps) >= self.max_steps:
+            if (
+                current_plan.decision
+                == AgentDecision.CONTINUE
+            ):
+                if len(executed_steps) >= (
+                    self.max_steps
+                ):
                     total_seconds = (
-                        perf_counter() - total_start
+                        perf_counter()
+                        - total_start
                     )
 
                     result = AgentLoopResult(
@@ -362,8 +421,12 @@ class AgentLoop:
                             "dell'Agent Loop è stato raggiunto."
                         ),
                         plan=current_plan,
-                        steps=tuple(executed_steps),
-                        observations=tuple(observations),
+                        steps=tuple(
+                            executed_steps
+                        ),
+                        observations=tuple(
+                            observations
+                        ),
                         total_seconds=total_seconds,
                         planning_seconds=planning_seconds,
                         execution_seconds=execution_seconds,
@@ -377,9 +440,11 @@ class AgentLoop:
 
                     return result
 
-                current_context = self._build_replan_context(
-                    context=context,
-                    observations=observations,
+                current_context = (
+                    self._build_replan_context(
+                        context=context,
+                        observations=observations,
+                    )
                 )
 
                 planning_start = perf_counter()
@@ -389,39 +454,317 @@ class AgentLoop:
                     goal=goal,
                 )
 
-                current_plan = self.planner.plan(
-                    goal=goal,
-                    context=current_context,
-                    tool_definitions=tool_definitions,
-                    observations=list(observations),
+                replanned_plan = (
+                    self.planner.plan(
+                        goal=goal,
+                        context=current_context,
+                        tool_definitions=tool_definitions,
+                        observations=list(
+                            observations
+                        ),
+                    )
                 )
 
                 planning_elapsed = (
-                    perf_counter() - planning_start
+                    perf_counter()
+                    - planning_start
                 )
 
-                planning_seconds += planning_elapsed
+                planning_seconds += (
+                    planning_elapsed
+                )
+
                 planner_calls += 1
 
                 self.event_bus.emit(
                     "planner.completed",
                     steps=len(
-                        current_plan.steps
+                        replanned_plan.steps
                     ),
                     planner_calls=planner_calls,
                     latency_seconds=planning_elapsed,
                 )
 
+                sanitized_plan = (
+                    self._remove_replayed_steps(
+                        plan=replanned_plan,
+                        observations=observations,
+                        goal=goal,
+                    )
+                )
+
+                if sanitized_plan is None:
+                    total_seconds = (
+                        perf_counter()
+                        - total_start
+                    )
+
+                    result = AgentLoopResult(
+                        goal=goal,
+                        decision=AgentDecision.DONE,
+                        message=self._build_final_message(
+                            goal=goal,
+                            plan=replanned_plan,
+                            steps=executed_steps,
+                        ),
+                        plan=replanned_plan,
+                        steps=tuple(
+                            executed_steps
+                        ),
+                        observations=tuple(
+                            observations
+                        ),
+                        total_seconds=total_seconds,
+                        planning_seconds=planning_seconds,
+                        execution_seconds=execution_seconds,
+                        verification_seconds=verification_seconds,
+                        planner_calls=planner_calls,
+                    )
+
+                    self._emit_completed(
+                        result
+                    )
+
+                    return result
+
+                current_plan = sanitized_plan
+
                 continue
 
             total_seconds = (
-                perf_counter() - total_start
+                perf_counter()
+                - total_start
             )
 
             raise RuntimeError(
                 "Decisione dell'Agent Loop non supportata: "
                 f"{current_plan.decision!r}"
             )
+
+    def _remove_replayed_steps(
+        self,
+        plan: AgentPlan,
+        observations: list[AgentObservation],
+        goal: str,
+    ) -> AgentPlan | None:
+        """
+        Rimuove dal replan le azioni già eseguite e verificate.
+
+        Questa protezione è applicata esclusivamente ai replanning:
+        non impedisce a un piano iniziale di contenere intenzionalmente
+        la stessa azione più volte.
+
+        Restituisce None quando il nuovo piano è composto soltanto
+        da azioni già completate. In quel caso l'Agent Loop può
+        considerare il goal completato senza rieseguire nulla.
+
+        Una ripetizione esplicita richiesta dall'utente non viene
+        filtrata.
+        """
+
+        if not observations:
+            return plan
+
+        if self._goal_explicitly_requests_repetition(
+            goal
+        ):
+            return plan
+
+        completed_signatures = {
+            self._step_signature(
+                tool_name=observation.tool_name,
+                arguments=observation.arguments,
+            )
+            for observation in observations
+            if (
+                observation.success
+                and observation.verified
+            )
+        }
+
+        if not completed_signatures:
+            return plan
+
+        remaining_steps: list[
+            AgentPlanStep
+        ] = []
+
+        removed_any = False
+
+        for step in plan.steps:
+            signature = (
+                self._step_signature(
+                    tool_name=step.tool_name,
+                    arguments=step.arguments,
+                )
+            )
+
+            if signature in completed_signatures:
+                removed_any = True
+                continue
+
+            remaining_steps.append(
+                step
+            )
+
+        if not removed_any:
+            return plan
+
+        if not remaining_steps:
+            return None
+
+        return AgentPlan(
+            goal=plan.goal,
+            steps=tuple(
+                remaining_steps
+            ),
+            decision=plan.decision,
+            message=plan.message,
+        )
+
+    @staticmethod
+    def _step_signature(
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> str:
+        try:
+            return json.dumps(
+                {
+                    "tool_name": tool_name,
+                    "arguments": arguments,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(
+                    ",",
+                    ":",
+                ),
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            return repr(
+                (
+                    tool_name,
+                    arguments,
+                )
+            )
+
+    @staticmethod
+    def _goal_explicitly_requests_repetition(
+        goal: str,
+    ) -> bool:
+        normalized = (
+            goal.strip()
+            .lower()
+        )
+
+        repetition_markers = (
+            "ripeti",
+            "di nuovo",
+            "ancora",
+            "due volte",
+            "2 volte",
+            "tre volte",
+            "3 volte",
+            "ripetilo",
+            "ripetila",
+            "ripeterlo",
+            "ripeterla",
+        )
+
+        return any(
+            marker in normalized
+            for marker in repetition_markers
+        )
+
+    def _build_final_message(
+        self,
+        goal: str,
+        plan: AgentPlan,
+        steps: list[AgentStepResult],
+    ) -> str:
+        """
+        Determina il messaggio finale destinato all'utente.
+
+        Priorità:
+        1. user_message prodotto dal tool.
+        2. message prodotto dal Planner.
+        3. altri campi testuali utili del risultato.
+        4. fallback generico.
+        """
+
+        for step_result in reversed(
+            steps
+        ):
+            if not step_result.tool_result.success:
+                continue
+
+            output = (
+                step_result.tool_result.output
+            )
+
+            if not isinstance(
+                output,
+                dict,
+            ):
+                continue
+
+            user_message = output.get(
+                "user_message"
+            )
+
+            if (
+                isinstance(
+                    user_message,
+                    str,
+                )
+                and user_message.strip()
+            ):
+                return user_message.strip()
+
+        if plan.message:
+            return plan.message
+
+        for step_result in reversed(
+            steps
+        ):
+            if not step_result.tool_result.success:
+                continue
+
+            output = (
+                step_result.tool_result.output
+            )
+
+            if not isinstance(
+                output,
+                dict,
+            ):
+                continue
+
+            for key in (
+                "message",
+                "response",
+                "answer",
+                "text",
+            ):
+                value = output.get(
+                    key
+                )
+
+                if (
+                    isinstance(
+                        value,
+                        str,
+                    )
+                    and value.strip()
+                ):
+                    return value.strip()
+
+        return (
+            "Operazione completata e verificata."
+        )
 
     def _emit_completed(
         self,
@@ -455,6 +798,14 @@ class AgentLoop:
                 "STATO ESECUZIONE:"
             )
 
+            parts.append(
+                "Le azioni sotto riportate sono già state "
+                "eseguite. Quelle con success=True e verified=True "
+                "sono già completate e NON devono essere ripetute "
+                "nel nuovo piano, salvo richiesta esplicita "
+                "dell'utente di ripeterle."
+            )
+
             parts.extend(
                 observation.to_context()
                 for observation in observations
@@ -463,3 +814,10 @@ class AgentLoop:
         return "\n\n".join(
             parts
         )
+
+
+__all__ = [
+    "AgentStepResult",
+    "AgentLoopResult",
+    "AgentLoop",
+]
