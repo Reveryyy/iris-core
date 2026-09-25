@@ -53,6 +53,12 @@ from app.tools.pc_filesystem import (
     ListDirectoryTool,
     SearchFilesTool,
 )
+from app.tools.pc_filesystem_ops import (
+    CopyPathTool,
+    CreateDirectoryTool,
+    MovePathTool,
+    OpenPathTool,
+)
 from app.tools.pc_clipboard import (
     GetClipboardTool,
     SetClipboardTool,
@@ -393,6 +399,22 @@ def main() -> None:
 
     tool_registry.register(
         SearchFilesTool()
+    )
+
+    tool_registry.register(
+        OpenPathTool()
+    )
+
+    tool_registry.register(
+        CreateDirectoryTool()
+    )
+
+    tool_registry.register(
+        CopyPathTool()
+    )
+
+    tool_registry.register(
+        MovePathTool()
     )
 
     tool_registry.register(
