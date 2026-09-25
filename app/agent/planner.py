@@ -455,9 +455,27 @@ class AgentPlanner:
             return gui_fallback_plan
 
         if last_error is not None:
+            error_details = (
+                f"{type(last_error).__name__}: "
+                f"{last_error}"
+            )
+
+            cause = last_error.__cause__
+
+            if (
+                cause is not None
+                and cause is not last_error
+            ):
+                error_details += (
+                    " | causa: "
+                    f"{type(cause).__name__}: "
+                    f"{cause}"
+                )
+
             raise ValueError(
                 "Il planner non ha prodotto un piano eseguibile "
-                "dopo i tentativi consentiti."
+                "dopo i tentativi consentiti. "
+                f"Errore: {error_details}"
             ) from last_error
 
         raise ValueError(
@@ -1198,7 +1216,6 @@ class AgentPlanner:
 
         if not normalized:
             return False
-
         markers = (
             " e ",
             " poi ",
