@@ -699,6 +699,8 @@ class AgentPlanner:
         if (
             "press_key" not in tool_names
             and "type_text" not in tool_names
+            and "set_clipboard" not in tool_names
+            and "get_clipboard" not in tool_names
         ):
             return None
 
@@ -749,8 +751,128 @@ class AgentPlanner:
                     message=None,
                 )
 
+        if "set_clipboard" in tool_names:
+            clipboard_text = (
+                self._extract_clipboard_set_text(
+                    goal
+                )
+            )
+
+            if clipboard_text is not None:
+                return AgentPlan(
+                    goal=goal,
+                    steps=(
+                        AgentPlanStep(
+                            tool_name="set_clipboard",
+                            arguments={
+                                "text": clipboard_text,
+                            },
+                            description=(
+                                "Copia il testo richiesto "
+                                "negli appunti di Windows."
+                            ),
+                            success_criteria=(
+                                "Il testo richiesto è presente "
+                                "negli appunti di Windows."
+                            ),
+                        ),
+                    ),
+                    decision=AgentDecision.DONE,
+                    message=None,
+                )
+
+        if "get_clipboard" in tool_names:
+            if normalized in {
+                "leggi gli appunti",
+                "leggi appunti",
+                "leggi il clipboard",
+                "leggi clipboard",
+                "leggi il contenuto degli appunti",
+                "leggi il contenuto del clipboard",
+                "mostrami gli appunti",
+                "mostra gli appunti",
+            }:
+                return AgentPlan(
+                    goal=goal,
+                    steps=(
+                        AgentPlanStep(
+                            tool_name="get_clipboard",
+                            arguments={},
+                            description=(
+                                "Leggi il testo attualmente "
+                                "presente negli appunti di Windows."
+                            ),
+                            success_criteria=(
+                                "Il contenuto degli appunti è stato "
+                                "recuperato correttamente."
+                            ),
+                        ),
+                    ),
+                    decision=AgentDecision.DONE,
+                    message=None,
+                )
+
         if "press_key" not in tool_names:
             return None
+
+        if "press_key" in tool_names:
+            if normalized in {
+                "copia",
+                "copia il testo",
+                "copia il contenuto",
+                "copia tutto",
+                "copia tutto il testo",
+                "copia tutto il contenuto",
+            }:
+                return AgentPlan(
+                    goal=goal,
+                    steps=(
+                        AgentPlanStep(
+                            tool_name="press_key",
+                            arguments={
+                                "key": "CTRL+C",
+                            },
+                            description=(
+                                "Copia negli appunti il contenuto "
+                                "selezionato nella finestra attiva."
+                            ),
+                            success_criteria=(
+                                "Il contenuto selezionato è stato "
+                                "copiato negli appunti."
+                            ),
+                        ),
+                    ),
+                    decision=AgentDecision.DONE,
+                    message=None,
+                )
+
+            if normalized in {
+                "incolla",
+                "incolla gli appunti",
+                "incolla il contenuto",
+                "incolla il testo",
+            }:
+                return AgentPlan(
+                    goal=goal,
+                    steps=(
+                        AgentPlanStep(
+                            tool_name="press_key",
+                            arguments={
+                                "key": "CTRL+V",
+                            },
+                            description=(
+                                "Incolla il contenuto degli appunti "
+                                "nella finestra attiva."
+                            ),
+                            success_criteria=(
+                                "Il contenuto degli appunti è stato "
+                                "inserito nella finestra attiva."
+                            ),
+                        ),
+                    ),
+                    decision=AgentDecision.DONE,
+                    message=None,
+                )
 
         if normalized in {
             "seleziona tutto",
@@ -825,6 +947,79 @@ class AgentPlanner:
             )
 
         return None
+
+    @staticmethod
+    def _extract_clipboard_set_text(
+        goal: str,
+    ) -> str | None:
+        normalized = goal.strip()
+
+        if not normalized:
+            return None
+
+        normalized = re.sub(
+            r"^\s*/agent\s+",
+            "",
+            normalized,
+            flags=re.IGNORECASE,
+        ).strip()
+
+        match = re.match(
+            r"^(copia|metti\s+negli\s+appunti|metti\s+nel\s+clipboard)\s+"
+            r"(.+?)\s*$",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+
+        if match is None:
+            return None
+
+        command = match.group(
+            1
+        ).strip().lower()
+
+        text = match.group(
+            2
+        ).strip()
+
+        if (
+            command == "copia"
+            and text.lower()
+            in {
+                "il testo",
+                "il contenuto",
+                "tutto",
+                "tutto il testo",
+                "tutto il contenuto",
+            }
+        ):
+            return None
+
+        if not text:
+            return None
+
+        quote_pairs = (
+            ('"', '"'),
+            ("'", "'"),
+            ("“", "”"),
+            ("‘", "’"),
+        )
+
+        for opening, closing in quote_pairs:
+            if (
+                len(text) >= 2
+                and text.startswith(opening)
+                and text.endswith(closing)
+            ):
+                text = text[
+                    1:-1
+                ].strip()
+                break
+
+        if not text:
+            return None
+
+        return text
 
     @staticmethod
     def _extract_text_input(
@@ -1309,6 +1504,12 @@ class AgentPlanner:
         if not normalized:
             return False
 
+        structural_text = (
+            AgentPlanner._strip_quoted_text(
+                normalized
+            )
+        )
+
         markers = (
             " e ",
             " poi ",
@@ -1326,7 +1527,7 @@ class AgentPlanner:
         )
 
         if any(
-            marker in normalized
+            marker in structural_text
             for marker in markers
         ):
             return True
@@ -1354,13 +1555,15 @@ class AgentPlanner:
             "seleziona ",
             "cancella ",
             "elimina ",
+            "copia ",
+            "incolla ",
         )
 
         action_count = sum(
             1
             for marker
             in action_markers
-            if marker in normalized
+            if marker in structural_text
         )
 
         if action_count >= 2:
@@ -1378,7 +1581,46 @@ class AgentPlanner:
         }:
             return True
 
-        return len(normalized) >= 100
+        return len(structural_text) >= 100
+
+    @staticmethod
+    def _strip_quoted_text(
+        value: str,
+    ) -> str:
+        """Rimuove il contenuto tra virgolette per i controlli strutturali."""
+
+        if not value:
+            return value
+
+        quote_pairs = {
+            '"': '"',
+            "“": "”",
+            "‘": "’",
+        }
+
+        result: list[str] = []
+        closing_quote: str | None = None
+
+        for character in value:
+            if closing_quote is not None:
+                if character == closing_quote:
+                    closing_quote = None
+                else:
+                    result.append(" ")
+                continue
+
+            closing = quote_pairs.get(
+                character
+            )
+
+            if closing is not None:
+                closing_quote = closing
+                result.append(" ")
+                continue
+
+            result.append(character)
+
+        return "".join(result)
 
     # ========================================================================
     # PLAN VALIDATION

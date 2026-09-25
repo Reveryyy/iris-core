@@ -48,6 +48,10 @@ from app.tools.pc import (
     RunCommandTool,
     WriteFileTool,
 )
+from app.tools.pc_clipboard import (
+    GetClipboardTool,
+    SetClipboardTool,
+)
 from app.tools.pc_close import CloseApplicationTool
 from app.tools.pc_discovery import (
     DiscoverPCStateTool,
@@ -301,6 +305,18 @@ def main() -> None:
 
     tool_registry.register(
         PressKeyTool()
+    )
+
+    # =========================================================================
+    # CLIPBOARD
+    # =========================================================================
+
+    tool_registry.register(
+        GetClipboardTool()
+    )
+
+    tool_registry.register(
+        SetClipboardTool()
     )
 
     # =========================================================================
