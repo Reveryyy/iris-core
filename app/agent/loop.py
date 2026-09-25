@@ -499,14 +499,34 @@ class AgentLoop:
                         - total_start
                     )
 
-                    result = AgentLoopResult(
-                        goal=goal,
-                        decision=AgentDecision.DONE,
-                        message=self._build_final_message(
+                    if (
+                        replanned_plan.decision
+                        == AgentDecision.DONE
+                    ):
+                        decision = AgentDecision.DONE
+                        message = self._build_final_message(
                             goal=goal,
                             plan=replanned_plan,
                             steps=executed_steps,
-                        ),
+                        )
+                    else:
+                        # Un replan CONTINUE composto soltanto da azioni già
+                        # eseguite non dimostra il completamento dell'obiettivo.
+                        # Non trasformiamo mai una pianificazione incompleta
+                        # in un falso DONE.
+                        decision = AgentDecision.ASK_USER
+                        message = (
+                            replanned_plan.message
+                            or (
+                                "Il Planner non ha prodotto una nuova azione "
+                                "eseguibile dopo le operazioni già completate."
+                            )
+                        )
+
+                    result = AgentLoopResult(
+                        goal=goal,
+                        decision=decision,
+                        message=message,
                         plan=replanned_plan,
                         steps=tuple(
                             executed_steps
