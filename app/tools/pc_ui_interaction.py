@@ -325,29 +325,25 @@ try {
         "focus" {
             $best.SetFocus()
 
-            $focused = [
-                System.Windows.Automation.AutomationElement
-            ]::FocusedElement
+            $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
+
+            if ($null -eq $focused) {
+                throw "Nessun controllo risulta focalizzato dopo SetFocus()."
+            }
+
+            $focusedCurrent = $focused.Current
 
             if (
-                $null -eq $focused
-                -or
-                $focused.Current.NativeWindowHandle -ne
+                $focusedCurrent.NativeWindowHandle -ne
                     $current.NativeWindowHandle
+                -or
+                [string]$focusedCurrent.Name -ne
+                    [string]$current.Name
+                -or
+                [string]$focusedCurrent.AutomationId -ne
+                    [string]$current.AutomationId
             ) {
-                # Alcuni controlli condividono lo stesso HWND.
-                # Verifichiamo anche Name e AutomationId.
-                $focusedCurrent = $focused.Current
-
-                if (
-                    [string]$focusedCurrent.Name -ne
-                        [string]$current.Name
-                    -or
-                    [string]$focusedCurrent.AutomationId -ne
-                        [string]$current.AutomationId
-                ) {
-                    throw "Il controllo non risulta focalizzato."
-                }
+                throw "Il controllo non risulta focalizzato."
             }
 
             $resultMessage = "focus"
