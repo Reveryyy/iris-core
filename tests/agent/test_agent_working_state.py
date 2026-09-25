@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from app.agent.planner import AgentPlanner
+from app.core import IRISCore
 
 
 class FakeRouter:
@@ -97,3 +98,21 @@ def test_recent_directory_extraction_requires_verified_directory_shape() -> None
     )
 
     assert AgentPlanner._extract_recent_directory(context) is None
+
+
+def test_core_recent_agent_context_preserves_structured_observation_lines() -> None:
+    core = object.__new__(IRISCore)
+    core._recent_agent_state = [
+        {
+            "tool_name": "create_directory",
+            "arguments": {"path": "/tmp/test-dir"},
+            "output": {"path": "/tmp/test-dir", "created_or_existing": True},
+        }
+    ]
+
+    context = core._build_recent_agent_context()
+
+    lines = context.splitlines()
+
+    assert lines[0] == "STATO OPERATIVO RECENTE:"
+    assert json.loads(lines[2])["output"]["path"] == "/tmp/test-dir"
