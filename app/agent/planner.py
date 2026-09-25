@@ -594,7 +594,7 @@ class AgentPlanner:
             return None
 
         normalized = re.sub(
-            r"^\\s*/agent\\s+",
+            r"^\s*/agent\s+",
             "",
             goal.strip(),
             flags=re.IGNORECASE,
@@ -622,7 +622,7 @@ class AgentPlanner:
             return None
 
         filename_match = re.search(
-            r"(?:file|un file)\\s+(?:chiamato|denominato|di nome)\\s+[\\\"']?([^\\\"'.,;]+)",
+            r"(?:file|un file)\s+(?:chiamato|denominato|di nome)\s+[\"']?([^\"'.,;]+)",
             goal,
             flags=re.IGNORECASE,
         )
@@ -637,7 +637,7 @@ class AgentPlanner:
             filename = f"{uuid4().hex}.txt"
 
         content_match = re.search(
-            r"scriv(?:i|ici)\\s+(?:dentro(?:ci)?\\s+)?[\\\"“‘]([^\\\"”’]+)[\\\"”’]",
+            r"scriv(?:i|ici)\s+(?:dentro(?:ci)?\s+)?[\"“‘]([^\"”’]+)[\"”’]",
             goal,
             flags=re.IGNORECASE,
         )
