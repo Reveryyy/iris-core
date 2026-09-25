@@ -455,9 +455,14 @@ def test_move_request_with_agent_prefix_never_uses_copy() -> None:
         ],
     )
 
-    assert plan.steps[0].tool_name == "move_path"
-    assert plan.steps[0].arguments["source"] == source
-    assert plan.steps[0].arguments["destination"] != source
+    assert plan.steps[0].tool_name == "create_directory"
+    assert plan.steps[1].tool_name == "move_path"
+    assert plan.steps[1].arguments["source"] == source
+    destination = PureWindowsPath(plan.steps[1].arguments["destination"])
+    assert destination.parent != PureWindowsPath(source).parent
+    assert destination.name == PureWindowsPath(source).name
+    assert str(destination.parent).startswith(root + "\\")
+
 
 def test_move_request_uses_recent_copy_destination() -> None:
     router = MoveRouter()
@@ -523,9 +528,12 @@ def test_move_request_uses_recent_copy_destination() -> None:
     )
 
     assert router.calls == 0
-    assert plan.steps[0].tool_name == "move_path"
-    assert plan.steps[0].arguments["source"] == copied
-    assert plan.steps[0].arguments["destination"] != copied
+    assert plan.steps[0].tool_name == "create_directory"
+    assert plan.steps[1].tool_name == "move_path"
+    assert plan.steps[1].arguments["source"] == copied
+    destination = PureWindowsPath(plan.steps[1].arguments["destination"])
+    assert destination.parent != PureWindowsPath(copied).parent
+    assert destination.name == PureWindowsPath(copied).name
 
 
 def test_move_request_never_degrades_to_copy() -> None:
