@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from uuid import uuid4
 from dataclasses import dataclass
 from typing import Any
@@ -197,6 +198,18 @@ class AgentPlanner:
             )
 
         available_tools = tool_definitions or []
+
+        # Per riferimenti espliciti a una directory già creata e verificata,
+        # la risoluzione del percorso deve usare lo stato reale osservato e non
+        # lasciare al modello la possibilità di reinterpretare il path.
+        reference_file_plan = self._build_file_creation_fallback(
+            goal=goal,
+            tool_definitions=available_tools,
+            context=context,
+        )
+
+        if reference_file_plan is not None:
+            return reference_file_plan
 
         system_content = self._build_system_prompt(
             tool_definitions=available_tools,
@@ -1531,6 +1544,11 @@ class AgentPlanner:
             "- usa lo STATO OPERATIVO RECENTE come fonte reale per i risultati "
             "delle richieste agent precedenti; risolvi riferimenti come 'quella "
             "cartella' usando i percorsi osservati, senza inventarne di nuovi;\n"
+            "- se l'utente chiede di creare un file dentro una directory già "
+            "identificata dallo stato recente, usa esattamente il percorso completo "
+            "della directory osservata come parent del nuovo file; non usare solo "
+            "il nome finale della directory e non sostituire il percorso con uno "
+            "inventato;\n"
             "- per richieste semplici di creazione di una nuova cartella o "
             "directory, usa la directory di progetto reale fornita dal contesto "
             "e crea il percorso necessario; non trasformare una richiesta "
