@@ -150,7 +150,7 @@ def test_directory_creation_fallback_uses_real_project_directory() -> None:
     assert plan is not None
     assert plan.steps[0].tool_name == "create_directory"
     path = plan.steps[0].arguments["path"]
-    assert path.startswith(r"C:\Users\picco\IRIS\iris-core\")
+    assert path.startswith("C:\\Users\\picco\\IRIS\\iris-core\\")
     assert "workspace" not in path.lower()
     assert PureWindowsPath(path).name.startswith("iris-test-")
 
