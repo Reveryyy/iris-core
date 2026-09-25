@@ -82,6 +82,9 @@ from app.tools.pc_window import FocusWindowTool
 from app.tools.pc_window_discovery import (
     ListWindowsTool,
 )
+from app.tools.pc_ui import (
+    ListUIElementsTool,
+)
 from app.tools.permissions import (
     Permission,
     PermissionManager,
@@ -305,6 +308,10 @@ def main() -> None:
 
     tool_registry.register(
         ListWindowsTool()
+    )
+
+    tool_registry.register(
+        ListUIElementsTool()
     )
 
     tool_registry.register(
