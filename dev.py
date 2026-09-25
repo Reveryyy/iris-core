@@ -4,15 +4,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Mapping
-
-
 ROOT = Path(__file__).resolve().parent
-WATCH_DIRECTORIES = (
-    ROOT / "app",
-)
-
-
 def snapshot_python_files(
     root: Path = ROOT,
 ) -> dict[Path, tuple[int, int]]:
@@ -25,13 +17,15 @@ def snapshot_python_files(
     """
     snapshot: dict[Path, tuple[int, int]] = {}
 
-    for directory in WATCH_DIRECTORIES:
-        try:
-            if not directory.exists():
-                continue
-        except OSError:
-            continue
+    watch_directory = root / "app"
 
+    try:
+        if not watch_directory.exists():
+            return snapshot
+    except OSError:
+        return snapshot
+
+    directory = watch_directory
         for path in directory.rglob("*.py"):
             parts = path.parts
 
