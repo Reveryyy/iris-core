@@ -211,6 +211,15 @@ class AgentPlanner:
         if reference_file_plan is not None:
             return reference_file_plan
 
+        reference_copy_plan = self._build_copy_creation_fallback(
+            goal=goal,
+            tool_definitions=available_tools,
+            context=context,
+        )
+
+        if reference_copy_plan is not None:
+            return reference_copy_plan
+
         system_content = self._build_system_prompt(
             tool_definitions=available_tools,
             context=context,
@@ -595,6 +604,152 @@ class AgentPlanner:
             decision=AgentDecision.DONE,
             message=None,
         )
+
+    def _build_copy_creation_fallback(
+        self,
+        goal: str,
+        tool_definitions: list[dict[str, Any]],
+        context: str | None,
+    ) -> AgentPlan | None:
+        """Gestisce copie verso una nuova posizione quando la destinazione è generica."""
+        if not context:
+            return None
+
+        tool_names = {
+            str(definition.get("name"))
+            for definition in tool_definitions
+            if isinstance(definition, dict)
+        }
+
+        if "copy_path" not in tool_names:
+            return None
+
+        normalized = re.sub(
+            r"^\\s*/agent\\s+",
+            "",
+            goal.strip(),
+            flags=re.IGNORECASE,
+        )
+        normalized_lower = normalized.lower()
+
+        if not (
+            "copia" in normalized_lower
+            and (
+                "quel file" in normalized_lower
+                or "il file" in normalized_lower
+                or "questo file" in normalized_lower
+            )
+            and (
+                "altra posizione" in normalized_lower
+                or "un'altra posizione" in normalized_lower
+                or "altra cartella" in normalized_lower
+                or "un'altra cartella" in normalized_lower
+            )
+        ):
+            return None
+
+        source = self._extract_recent_file(context)
+        destination_root = self._extract_project_directory(context)
+
+        if source is None or destination_root is None:
+            return None
+
+        source_path = Path(source)
+        root_path = Path(destination_root)
+        source_parent = source_path.parent
+
+        destination_parent = root_path
+
+        if destination_parent.resolve(strict=False) == source_parent.resolve(strict=False):
+            destination_parent = root_path / f"iris-copy-{uuid4().hex[:8]}"
+            return AgentPlan(
+                goal=goal,
+                steps=(
+                    AgentPlanStep(
+                        tool_name="create_directory",
+                        arguments={"path": str(destination_parent)},
+                        description=(
+                            "Crea una nuova posizione di destinazione nella radice "
+                            "del progetto perché la posizione corrente coincide con essa."
+                        ),
+                        success_criteria=(
+                            "La nuova directory di destinazione esiste."
+                        ),
+                    ),
+                    AgentPlanStep(
+                        tool_name="copy_path",
+                        arguments={
+                            "source": str(source_path),
+                            "destination": str(
+                                destination_parent / source_path.name
+                            ),
+                        },
+                        description=(
+                            "Copia il file già identificato nella nuova directory."
+                        ),
+                        success_criteria=(
+                            "La copia del file esiste nella nuova posizione."
+                        ),
+                    ),
+                ),
+                decision=AgentDecision.DONE,
+                message=None,
+            )
+
+        destination = destination_parent / (
+            f"{source_path.stem}-copy-{uuid4().hex[:8]}{source_path.suffix}"
+        )
+
+        return AgentPlan(
+            goal=goal,
+            steps=(
+                AgentPlanStep(
+                    tool_name="copy_path",
+                    arguments={
+                        "source": str(source_path),
+                        "destination": str(destination),
+                    },
+                    description=(
+                        "Copia il file già identificato nella radice del progetto."
+                    ),
+                    success_criteria=(
+                        "La copia del file esiste nella nuova posizione."
+                    ),
+                ),
+            ),
+            decision=AgentDecision.DONE,
+            message=None,
+        )
+
+    @staticmethod
+    def _extract_recent_file(context: str) -> str | None:
+        for line in context.splitlines():
+            try:
+                value = json.loads(line)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+
+            if not isinstance(value, dict):
+                continue
+
+            output = value.get("output")
+            if not isinstance(output, dict):
+                continue
+
+            path = output.get("path")
+            if not isinstance(path, str) or not path.strip():
+                continue
+
+            if value.get("tool_name") in {
+                "read_file",
+                "write_file",
+            }:
+                return path
+
+            if output.get("is_file") is True or output.get("type") == "file":
+                return path
+
+        return None
 
     def _build_directory_creation_fallback(
         self,
@@ -1559,7 +1714,12 @@ class AgentPlanner:
             "- per richieste come 'directory del progetto', usa esattamente "
             "la radice Git presente nel contesto quando disponibile, "
             "altrimenti usa esattamente la directory di lavoro corrente; "
-            "non sintetizzare o inventare percorsi assoluti;\n\n"
+            "non sintetizzare o inventare percorsi assoluti;\n"
+            "- per 'copia quel file in un'altra posizione', quando il file è "
+            "identificato nello STATO OPERATIVO RECENTE ma la destinazione non "
+            "è specificata, usa la radice del progetto come destinazione secondaria "
+            "e assegna un nome di copia univoco; non usare ask_user solo per questa "
+            "ambiguità quando esiste una destinazione ragionevole e verificabile;\n\n"
 
             "SEMANTICA GUI:\n"
             "- 'seleziona tutto' -> press_key con key='CTRL+A';\n"
