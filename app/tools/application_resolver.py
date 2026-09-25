@@ -196,6 +196,15 @@ class ApplicationResolver:
 
         self._cache = None
 
+    def discover(self) -> list[ResolvedApplication]:
+        """
+        Restituisce l'inventario corrente delle applicazioni scoperte.
+        """
+
+        return list(
+            self._discover()
+        )
+
     # ========================================================================
     # DISCOVERY
     # ========================================================================
