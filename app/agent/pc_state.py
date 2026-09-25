@@ -131,7 +131,7 @@ class PCState:
 
     def to_context(
         self,
-        max_items: int = 30,
+        max_items: int | None = None,
     ) -> str:
         """
         Converte lo stato in un contesto compatto per il Planner.
@@ -167,7 +167,13 @@ class PCState:
                 "- running_processes:"
             )
 
-            for process in self.processes[:max_items]:
+            processes = (
+                self.processes
+                if max_items is None
+                else self.processes[:max_items]
+            )
+
+            for process in processes:
                 lines.append(
                     f"  - {process.name} "
                     f"(pid={process.pid})"
@@ -178,7 +184,13 @@ class PCState:
                 "- windows:"
             )
 
-            for window in self.windows[:max_items]:
+            windows = (
+                self.windows
+                if max_items is None
+                else self.windows[:max_items]
+            )
+
+            for window in windows:
                 lines.append(
                     f"  - {window.title}"
                 )
@@ -188,7 +200,13 @@ class PCState:
                 "- installed_applications:"
             )
 
-            for application in self.applications[:max_items]:
+            applications = (
+                self.applications
+                if max_items is None
+                else self.applications[:max_items]
+            )
+
+            for application in applications:
                 lines.append(
                     f"  - {application.name}"
                 )
@@ -198,9 +216,14 @@ class PCState:
                 "- facts:"
             )
 
-            for key, value in list(
+            facts = list(
                 self.facts.items()
-            )[:max_items]:
+            )
+
+            if max_items is not None:
+                facts = facts[:max_items]
+
+            for key, value in facts:
                 lines.append(
                     f"  - {key}: {value}"
                 )
