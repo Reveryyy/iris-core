@@ -1072,26 +1072,29 @@ class OpenApplicationTool(Tool):
 
 class ReadFileTool(Tool):
     """
-    Legge un file di testo presente in uno dei percorsi consentiti.
+    Legge un file di testo da qualsiasi percorso accessibile al processo
+    di IRIS. È possibile configurare esplicitamente dei percorsi consentiti
+    quando si vuole eseguire IRIS in una sandbox.
     """
 
     def __init__(
         self,
         allowed_roots: list[str | Path] | None = None,
-        max_bytes: int = 1_000_000,
+        max_bytes: int | None = None,
     ) -> None:
         if max_bytes <= 0:
             raise ValueError(
                 "max_bytes deve essere maggiore di zero."
             )
 
-        self.allowed_roots = [
-            Path(root).resolve()
-            for root in (
-                allowed_roots
-                or [Path.cwd()]
-            )
-        ]
+        self.allowed_roots = (
+            None
+            if allowed_roots is None
+            else [
+                Path(root).resolve()
+                for root in allowed_roots
+            ]
+        )
 
         self.max_bytes = max_bytes
 
@@ -1191,7 +1194,10 @@ class ReadFileTool(Tool):
 
             size = resolved_path.stat().st_size
 
-            if size > self.max_bytes:
+            if (
+                self.max_bytes is not None
+                and size > self.max_bytes
+            ):
                 return ToolResult(
                     success=False,
                     error=(
@@ -1233,6 +1239,9 @@ class ReadFileTool(Tool):
         self,
         path: Path,
     ) -> bool:
+        if self.allowed_roots is None:
+            return True
+
         return any(
             self._is_relative_to(
                 path,
@@ -1261,26 +1270,29 @@ class ReadFileTool(Tool):
 
 class WriteFileTool(Tool):
     """
-    Scrive un file di testo in uno dei percorsi consentiti.
+    Scrive un file di testo in qualsiasi percorso accessibile al processo
+    di IRIS. È possibile configurare esplicitamente dei percorsi consentiti
+    quando si vuole eseguire IRIS in una sandbox.
     """
 
     def __init__(
         self,
         allowed_roots: list[str | Path] | None = None,
-        max_bytes: int = 1_000_000,
+        max_bytes: int | None = None,
     ) -> None:
         if max_bytes <= 0:
             raise ValueError(
                 "max_bytes deve essere maggiore di zero."
             )
 
-        self.allowed_roots = [
-            Path(root).resolve()
-            for root in (
-                allowed_roots
-                or [Path.cwd()]
-            )
-        ]
+        self.allowed_roots = (
+            None
+            if allowed_roots is None
+            else [
+                Path(root).resolve()
+                for root in allowed_roots
+            ]
+        )
 
         self.max_bytes = max_bytes
 
@@ -1431,6 +1443,9 @@ class WriteFileTool(Tool):
         self,
         path: Path,
     ) -> bool:
+        if self.allowed_roots is None:
+            return True
+
         return any(
             self._is_relative_to(
                 path,
@@ -1459,28 +1474,39 @@ class WriteFileTool(Tool):
 
 class RunCommandTool(Tool):
     """
-    Esegue comandi di sistema esplicitamente consentiti.
+    Esegue un comando di sistema arbitrario nel contesto del processo di IRIS.
+
+    Il comando non viene confrontato con una allowlist hardcoded: IRIS può
+    usare qualsiasi comando disponibile nel sistema operativo, inclusi
+    comandi con argomenti, pipeline e redirezioni gestite dalla shell.
 
     stdout e stderr vengono sempre catturati e non vengono mai
     lasciati collegati alla console interattiva di IRIS.
     """
 
-    def __init__(self) -> None:
-        self._commands = {
-            "python_version": [
-                "python",
-                "--version",
-            ],
-            "whoami": [
-                "whoami",
-            ],
-        }
+    DEFAULT_TIMEOUT_SECONDS = 60.0
+
+    def __init__(
+        self,
+        default_timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    ) -> None:
+        if default_timeout_seconds <= 0:
+            raise ValueError(
+                "default_timeout_seconds deve essere maggiore di zero."
+            )
+
+        self.default_timeout_seconds = float(
+            default_timeout_seconds
+        )
 
         self._definition = ToolDefinition(
             name="run_command",
             description=(
-                "Esegue uno dei comandi di sistema "
-                "esplicitamente consentiti da IRIS."
+                "Esegue un comando di sistema arbitrario disponibile "
+                "sul computer. Il comando viene interpretato dalla "
+                "shell del sistema operativo e può includere argomenti, "
+                "pipeline e redirezioni. È possibile specificare "
+                "anche una directory di lavoro."
             ),
             input_schema={
                 "type": "object",
@@ -1488,7 +1514,20 @@ class RunCommandTool(Tool):
                     "command": {
                         "type": "string",
                         "description": (
-                            "Nome del comando consentito."
+                            "Comando completo da eseguire."
+                        ),
+                    },
+                    "cwd": {
+                        "type": "string",
+                        "description": (
+                            "Directory di lavoro opzionale del comando."
+                        ),
+                    },
+                    "timeout_seconds": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "description": (
+                            "Timeout opzionale in secondi."
                         ),
                     },
                 },
@@ -1515,43 +1554,118 @@ class RunCommandTool(Tool):
         self,
         arguments: dict[str, Any],
     ) -> ToolResult:
-        command_name = arguments.get(
+        command = arguments.get(
             "command"
         )
 
+        cwd = arguments.get(
+            "cwd"
+        )
+
+        timeout_seconds = arguments.get(
+            "timeout_seconds",
+            self.default_timeout_seconds,
+        )
+
         if not isinstance(
-            command_name,
+            command,
             str,
         ):
             return ToolResult(
                 success=False,
                 error=(
-                    "Il nome del comando "
-                    "deve essere una stringa."
+                    "Il comando deve essere una stringa."
                 ),
             )
 
-        command_name = command_name.strip()
+        command = command.strip()
 
-        if not command_name:
+        if not command:
             return ToolResult(
                 success=False,
                 error=(
-                    "Il nome del comando "
-                    "non può essere vuoto."
+                    "Il comando non può essere vuoto."
                 ),
             )
 
-        command = self._commands.get(
-            command_name
-        )
+        if cwd is not None:
+            if not isinstance(
+                cwd,
+                str,
+            ):
+                return ToolResult(
+                    success=False,
+                    error=(
+                        "La directory di lavoro deve essere "
+                        "una stringa."
+                    ),
+                )
 
-        if command is None:
+            cwd = cwd.strip()
+
+            if not cwd:
+                return ToolResult(
+                    success=False,
+                    error=(
+                        "La directory di lavoro non può essere vuota."
+                    ),
+                )
+
+            try:
+                resolved_cwd = Path(
+                    cwd
+                ).resolve()
+
+                if not resolved_cwd.exists():
+                    return ToolResult(
+                        success=False,
+                        error=(
+                            f"La directory '{resolved_cwd}' "
+                            "non esiste."
+                        ),
+                    )
+
+                if not resolved_cwd.is_dir():
+                    return ToolResult(
+                        success=False,
+                        error=(
+                            f"'{resolved_cwd}' non è una directory."
+                        ),
+                    )
+
+            except OSError as error:
+                return ToolResult(
+                    success=False,
+                    error=(
+                        "Impossibile risolvere la directory di lavoro: "
+                        f"{error}"
+                    ),
+                )
+        else:
+            resolved_cwd = None
+
+        if (
+            isinstance(
+                timeout_seconds,
+                bool,
+            )
+            or not isinstance(
+                timeout_seconds,
+                (int, float),
+            )
+        ):
             return ToolResult(
                 success=False,
                 error=(
-                    f"Il comando '{command_name}' "
-                    "non è consentito."
+                    "Il timeout deve essere un numero maggiore di zero."
+                ),
+            )
+
+        if timeout_seconds <= 0:
+            return ToolResult(
+                success=False,
+                error=(
+                    "Il timeout deve essere maggiore di zero."
                 ),
             )
 
@@ -1560,46 +1674,100 @@ class RunCommandTool(Tool):
                 command,
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=float(timeout_seconds),
                 check=False,
-                shell=False,
+                shell=True,
                 stdin=subprocess.DEVNULL,
+                cwd=(
+                    str(resolved_cwd)
+                    if resolved_cwd is not None
+                    else None
+                ),
                 creationflags=_windows_no_console_flags(),
             )
 
             output = completed.stdout.strip()
             error = completed.stderr.strip()
 
+            result_output = {
+                "command": command,
+                "cwd": (
+                    str(resolved_cwd)
+                    if resolved_cwd is not None
+                    else None
+                ),
+                "stdout": output,
+                "stderr": error,
+                "returncode": completed.returncode,
+            }
+
             if completed.returncode != 0:
                 return ToolResult(
                     success=False,
-                    output={
-                        "command": command_name,
-                        "stdout": output,
-                        "stderr": error,
-                        "returncode": completed.returncode,
-                    },
+                    output=result_output,
                     error=(
                         error
                         or (
-                            f"Il comando '{command_name}' "
+                            f"Il comando '{command}' "
                             "ha restituito un errore."
                         )
                     ),
                 )
 
+            result_output["user_message"] = (
+                f"Ho eseguito il comando '{command}'."
+            )
+
             return ToolResult(
                 success=True,
+                output=result_output,
+            )
+
+        except subprocess.TimeoutExpired as error:
+            stdout = error.stdout
+            stderr = error.stderr
+
+            if isinstance(
+                stdout,
+                bytes,
+            ):
+                stdout = stdout.decode(
+                    errors="replace"
+                )
+
+            if isinstance(
+                stderr,
+                bytes,
+            ):
+                stderr = stderr.decode(
+                    errors="replace"
+                )
+
+            return ToolResult(
+                success=False,
                 output={
-                    "command": command_name,
-                    "stdout": output,
-                    "stderr": error,
-                    "returncode": completed.returncode,
-                    "user_message": (
-                        f"Ho eseguito il comando "
-                        f"'{command_name}'."
+                    "command": command,
+                    "cwd": (
+                        str(resolved_cwd)
+                        if resolved_cwd is not None
+                        else None
                     ),
+                    "stdout": (
+                        stdout.strip()
+                        if isinstance(stdout, str)
+                        else ""
+                    ),
+                    "stderr": (
+                        stderr.strip()
+                        if isinstance(stderr, str)
+                        else ""
+                    ),
+                    "timeout_seconds": float(timeout_seconds),
                 },
+                error=(
+                    f"Il comando '{command}' ha superato il "
+                    f"timeout di {float(timeout_seconds)} secondi."
+                ),
             )
 
         except (
@@ -1610,6 +1778,6 @@ class RunCommandTool(Tool):
                 success=False,
                 error=(
                     f"Impossibile eseguire "
-                    f"'{command_name}': {error}"
+                    f"'{command}': {error}"
                 ),
             )
