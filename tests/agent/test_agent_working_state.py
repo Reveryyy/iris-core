@@ -153,3 +153,82 @@ def test_directory_creation_fallback_uses_real_project_directory() -> None:
     assert path.startswith(r"C:\Users\picco\IRIS\iris-core\")
     assert "workspace" not in path.lower()
     assert PureWindowsPath(path).name.startswith("iris-test-")
+
+
+class WrongPathRouter:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def generate(self, *args, **kwargs):
+        self.calls += 1
+        return json.dumps(
+            {
+                "goal": "crea un file dentro quella cartella e scrivici del testo",
+                "decision": "done",
+                "message": None,
+                "steps": [
+                    {
+                        "tool_name": "write_file",
+                        "arguments": {
+                            "path": r"C:\Users\picco\IRIS\iris-core\test",
+                            "content": "test",
+                        },
+                        "description": "Scrivi il file.",
+                        "success_criteria": "Il file esiste.",
+                    }
+                ],
+            }
+        )
+
+
+def test_plan_prefers_verified_directory_over_llm_file_path() -> None:
+    router = WrongPathRouter()
+    planner = AgentPlanner(router)
+
+    context = "\n".join(
+        [
+            "STATO OPERATIVO RECENTE:",
+            json.dumps(
+                {
+                    "tool_name": "create_directory",
+                    "arguments": {
+                        "path": r"C:\Users\picco\IRIS\iris-core\test",
+                    },
+                    "output": {
+                        "path": r"C:\Users\picco\IRIS\iris-core\test",
+                        "created_or_existing": True,
+                    },
+                }
+            ),
+        ]
+    )
+
+    plan = planner.plan(
+        goal="crea un file dentro quella cartella e scrivici del testo",
+        context=context,
+        tool_definitions=[
+            {
+                "name": "write_file",
+                "description": "Scrive un file.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "content": {"type": "string"},
+                    },
+                    "required": ["path", "content"],
+                    "additionalProperties": False,
+                },
+            }
+        ],
+    )
+
+    assert router.calls == 0
+    assert plan.steps[0].tool_name == "write_file"
+    assert plan.steps[0].arguments["path"].startswith(
+        r"C:\Users\picco\IRIS\iris-core\test\"
+    )
+    assert plan.steps[0].arguments["path"] != (
+        r"C:\Users\picco\IRIS\iris-core\test"
+    )
+    assert plan.steps[0].arguments["content"] == "Testo creato da IRIS."
