@@ -205,12 +205,7 @@ foreach ($window in $windows) {
     try {
         $name = $window.Current.Name
 
-        if (
-            $name -and (
-                $name -like "*$query*"
-                -or $query -like "*$name*"
-            )
-        ) {
+        if ($name -and (($name -like "*$query*") -or ($query -like "*$name*"))) {
             $targetWindow = $window
             break
         }
@@ -243,47 +238,20 @@ foreach ($candidate in $elements) {
 
         $score = $null
 
-        if (
-            $name -and
-            $name.Equals(
-                $elementQuery,
-                [System.StringComparison]::OrdinalIgnoreCase
-            )
-        ) {
+        if ($name -and $name.Equals($elementQuery, [System.StringComparison]::OrdinalIgnoreCase)) {
             $score = 0
         }
-        elseif (
-            $automationId -and
-            $automationId.Equals(
-                $elementQuery,
-                [System.StringComparison]::OrdinalIgnoreCase
-            )
-        ) {
+        elseif ($automationId -and $automationId.Equals($elementQuery, [System.StringComparison]::OrdinalIgnoreCase)) {
             $score = 1
         }
-        elseif (
-            $name -and
-            $name.IndexOf(
-                $elementQuery,
-                [System.StringComparison]::OrdinalIgnoreCase
-            ) -ge 0
-        ) {
+        elseif ($name -and $name.IndexOf($elementQuery, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
             $score = 2
         }
-        elseif (
-            $automationId -and
-            $automationId.IndexOf(
-                $elementQuery,
-                [System.StringComparison]::OrdinalIgnoreCase
-            ) -ge 0
-        ) {
+        elseif ($automationId -and $automationId.IndexOf($elementQuery, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
             $score = 3
         }
 
-        if (
-            $null -ne $score -and
-            $score -lt $bestScore
-        ) {
+        if ($null -ne $score -and $score -lt $bestScore) {
             $best = $candidate
             $bestScore = $score
         }
