@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import subprocess
@@ -84,7 +85,7 @@ class ListUIElementsTool(Tool):
                 error="window_title non può essere vuoto.",
             )
 
-        if os.name != "nt":
+        if os.name != "nt" or not hasattr(ctypes, "windll"):
             return ToolResult(
                 success=False,
                 error=(
