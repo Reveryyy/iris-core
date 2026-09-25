@@ -57,6 +57,7 @@ def test_file_creation_fallback_uses_recent_verified_directory() -> None:
     )
 
     assert plan is not None
+    assert len(plan.steps) == 1
     assert plan.steps[0].tool_name == "write_file"
     assert plan.steps[0].arguments["path"].startswith(
         "/tmp/iris-test-dir/"
