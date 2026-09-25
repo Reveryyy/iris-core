@@ -98,7 +98,6 @@ class ClickMouseTool(Tool):
                         "description": (
                             "Coordinata verticale del click."
                         ),
-                        "minimum": 0,
                     },
                 },
                 "required": [
@@ -183,29 +182,33 @@ class ClickMouseTool(Tool):
             return ToolResult(
                 success=False,
                 error=(
-                    f"Coordinate fuori dal desktop virtuale: "
-                    f"({x}, {y}). Area: "
+                    f"Coordinate fuori dallo schermo "
+                    f"(desktop virtuale): ({x}, {y}). Area: "
                     f"x={virtual_left}..{right - 1}, "
                     f"y={virtual_top}..{bottom - 1}."
                 ),
             )
 
         set_cursor_pos = user32.SetCursorPos
-        set_cursor_pos.argtypes = [
-            wintypes.INT,
-            wintypes.INT,
-        ]
-        set_cursor_pos.restype = wintypes.BOOL
+        if hasattr(set_cursor_pos, "argtypes"):
+            set_cursor_pos.argtypes = [
+                wintypes.INT,
+                wintypes.INT,
+            ]
+        if hasattr(set_cursor_pos, "restype"):
+            set_cursor_pos.restype = wintypes.BOOL
 
         mouse_event = user32.mouse_event
-        mouse_event.argtypes = [
-            wintypes.DWORD,
-            wintypes.DWORD,
-            wintypes.DWORD,
-            wintypes.DWORD,
-            ctypes.c_ulong,
-        ]
-        mouse_event.restype = None
+        if hasattr(mouse_event, "argtypes"):
+            mouse_event.argtypes = [
+                wintypes.DWORD,
+                wintypes.DWORD,
+                wintypes.DWORD,
+                wintypes.DWORD,
+                ctypes.c_ulong,
+            ]
+        if hasattr(mouse_event, "restype"):
+            mouse_event.restype = None
 
         try:
             moved = set_cursor_pos(
@@ -291,14 +294,12 @@ class MoveMouseTool(Tool):
                         "description": (
                             "Coordinata orizzontale dello schermo."
                         ),
-                        "minimum": 0,
                     },
                     "y": {
                         "type": "integer",
                         "description": (
                             "Coordinata verticale dello schermo."
                         ),
-                        "minimum": 0,
                     },
                 },
                 "required": [
@@ -351,10 +352,12 @@ class MoveMouseTool(Tool):
 
         try:
             get_metrics = user32.GetSystemMetrics
-            get_metrics.argtypes = [
-                ctypes.c_int,
-            ]
-            get_metrics.restype = ctypes.c_int
+            if hasattr(get_metrics, "argtypes"):
+                get_metrics.argtypes = [
+                    ctypes.c_int,
+                ]
+            if hasattr(get_metrics, "restype"):
+                get_metrics.restype = ctypes.c_int
 
             (
                 virtual_left,
@@ -383,7 +386,7 @@ class MoveMouseTool(Tool):
                 return ToolResult(
                     success=False,
                     error=(
-                        f"Coordinate fuori dal desktop virtuale: "
+                        f"Coordinate fuori dallo schermo (desktop virtuale): "
                         f"({x}, {y}). Area: "
                         f"x={virtual_left}..{right - 1}, "
                         f"y={virtual_top}..{bottom - 1}."
@@ -391,11 +394,13 @@ class MoveMouseTool(Tool):
                 )
 
             set_cursor_pos = user32.SetCursorPos
-            set_cursor_pos.argtypes = [
-                wintypes.INT,
-                wintypes.INT,
-            ]
-            set_cursor_pos.restype = wintypes.BOOL
+            if hasattr(set_cursor_pos, "argtypes"):
+                set_cursor_pos.argtypes = [
+                    wintypes.INT,
+                    wintypes.INT,
+                ]
+            if hasattr(set_cursor_pos, "restype"):
+                set_cursor_pos.restype = wintypes.BOOL
 
             if not set_cursor_pos(x, y):
                 return ToolResult(
@@ -407,10 +412,12 @@ class MoveMouseTool(Tool):
                 )
 
             get_cursor_pos = user32.GetCursorPos
-            get_cursor_pos.argtypes = [
-                ctypes.POINTER(wintypes.POINT),
-            ]
-            get_cursor_pos.restype = wintypes.BOOL
+            if hasattr(get_cursor_pos, "argtypes"):
+                get_cursor_pos.argtypes = [
+                    ctypes.POINTER(wintypes.POINT),
+                ]
+            if hasattr(get_cursor_pos, "restype"):
+                get_cursor_pos.restype = wintypes.BOOL
 
             point = wintypes.POINT()
 
