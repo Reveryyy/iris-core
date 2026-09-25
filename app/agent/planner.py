@@ -973,7 +973,7 @@ class AgentPlanner:
         if not meaningful:
             return None
 
-        def score(candidate: dict[str, Any]) -> tuple[int, int, str, str, int, str]:
+        def score(candidate: dict[str, Any]) -> tuple[int, int, int, str, str, int, str]:
             name = str(
                 candidate.get("name", "")
             ).casefold()
@@ -982,6 +982,18 @@ class AgentPlanner:
                 1
                 for token in meaningful
                 if token in name
+            )
+
+            # In una richiesta generica come "il file di test", un file
+            # creato dall'utente ma non ancora tracciato dal repository è
+            # una corrispondenza più plausibile dei file sorgente già
+            # presenti nel progetto. Il campo è opzionale per mantenere
+            # il fallback compatibile anche quando la ricerca non si trova
+            # dentro un repository Git o Git non è disponibile.
+            untracked_hit = (
+                1
+                if candidate.get("is_git_tracked") is False
+                else 0
             )
 
             adjacency_hits = sum(
@@ -1015,6 +1027,7 @@ class AgentPlanner:
             return (
                 token_hits,
                 adjacency_hits + prefix_hit,
+                untracked_hit,
                 created_at,
                 modified_at,
                 len(name),
