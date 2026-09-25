@@ -1676,6 +1676,28 @@ class TerminalUI:
         self,
         raw_command: str,
     ) -> str:
+        # /agent contiene testo libero: non deve essere passato a
+        # shlex.split(), altrimenti apostrofi come quello di "l'alto"
+        # vengono interpretati come virgolette aperte.
+        if raw_command.lower().startswith(
+            "/agent"
+        ):
+            goal = raw_command[
+                len("/agent"):
+            ].strip()
+
+            if not goal:
+                self._append_system(
+                    "Specifica un obiettivo dopo /agent."
+                )
+                return "handled"
+
+            self._start_agent(
+                goal
+            )
+
+            return "handled"
+
         try:
             parts = shlex.split(
                 raw_command
@@ -1774,23 +1796,6 @@ class TerminalUI:
             self._handle_model_command(
                 parts
             )
-            return "handled"
-
-        if command == "/agent":
-            goal = raw_command[
-                len("/agent"):
-            ].strip()
-
-            if not goal:
-                self._append_system(
-                    "Specifica un obiettivo dopo /agent."
-                )
-                return "handled"
-
-            self._start_agent(
-                goal
-            )
-
             return "handled"
 
         self._append_system(

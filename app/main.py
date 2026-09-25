@@ -61,6 +61,7 @@ from app.tools.pc_keyboard import PressKeyTool
 from app.tools.pc_minimize import MinimizeWindowTool
 from app.tools.pc_mouse import ClickMouseTool
 from app.tools.pc_screenshot import ScreenshotTool
+from app.tools.pc_scroll import ScrollMouseTool
 from app.tools.pc_state import GetForegroundWindowTool
 from app.tools.pc_wait import WaitTool
 from app.tools.pc_window import FocusWindowTool
@@ -305,6 +306,10 @@ def main() -> None:
 
     tool_registry.register(
         PressKeyTool()
+    )
+
+    tool_registry.register(
+        ScrollMouseTool()
     )
 
     # =========================================================================
