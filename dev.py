@@ -7,6 +7,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
+DEV_LOG = ROOT / ".iris-dev.log"
+POLL_INTERVAL_SECONDS = 0.5
+CHANGE_SETTLE_SECONDS = 0.4
 
 
 def snapshot_python_files(
@@ -51,8 +54,97 @@ def snapshot_python_files(
     )
 
 
+def compile_python_sources(
+    root: Path = ROOT,
+) -> bool:
+    """
+    Controlla la sintassi dei sorgenti prima di riavviare IRIS.
+
+    Se il file appena salvato è ancora incompleto o contiene un errore
+    sintattico, il processo corrente non viene terminato: il reload verrà
+    ritentato al successivo salvataggio.
+    """
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "compileall",
+            "-q",
+            str(root / "app"),
+        ],
+        cwd=root,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+
+    if completed.returncode == 0:
+        return True
+
+    write_dev_log(
+        "Reload annullato: errore di sintassi nei sorgenti."
+    )
+
+    if completed.stderr.strip():
+        write_dev_log(
+            completed.stderr.strip()
+        )
+
+    return False
+
+
+def wait_for_stable_snapshot(
+    root: Path = ROOT,
+) -> dict[Path, tuple[int, int]]:
+    """
+    Aspetta che il file system smetta di cambiare per un breve intervallo.
+
+    Serve a evitare reload mentre un editor sta ancora scrivendo il file.
+    """
+    snapshot = snapshot_python_files(root)
+
+    while True:
+        time.sleep(
+            CHANGE_SETTLE_SECONDS
+        )
+
+        stable_snapshot = snapshot_python_files(root)
+
+        if stable_snapshot == snapshot:
+            return stable_snapshot
+
+        snapshot = stable_snapshot
+
+
+def write_dev_log(
+    message: str,
+) -> None:
+    """Scrive gli eventi del supervisore in un file separato dalla UI."""
+    timestamp = time.strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+
+    try:
+        with DEV_LOG.open(
+            "a",
+            encoding="utf-8",
+        ) as handle:
+            handle.write(
+                f"[{timestamp}] {message}\n"
+            )
+    except OSError:
+        # Il logging non deve mai compromettere il supervisore.
+        pass
+
+
 def start_iris() -> subprocess.Popen:
     """Avvia IRIS come processo figlio usando lo stesso interprete Python."""
+    write_dev_log(
+        "Avvio del processo IRIS."
+    )
+
     return subprocess.Popen(
         [
             sys.executable,
@@ -70,6 +162,10 @@ def stop_iris(
     if process.poll() is not None:
         return
 
+    write_dev_log(
+        "Arresto del processo IRIS."
+    )
+
     process.terminate()
 
     try:
@@ -77,6 +173,11 @@ def stop_iris(
             timeout=5.0,
         )
     except subprocess.TimeoutExpired:
+        write_dev_log(
+            "IRIS non ha terminato entro il timeout; "
+            "uso kill."
+        )
+
         process.kill()
         process.wait()
 
@@ -89,7 +190,16 @@ def main() -> None:
         py dev.py
 
     Da quel momento IRIS viene avviato automaticamente e ogni modifica
-    ai file Python dentro app/ provoca un riavvio automatico del processo.
+    ai file Python dentro app/ provoca un reload automatico.
+
+    Il supervisore non scrive mai nella console interattiva: tutti i suoi
+    messaggi finiscono in .iris-dev.log, evitando di corrompere la UI
+    prompt_toolkit di IRIS.
+
+    Prima di un reload:
+    - attende che la modifica sia stabile;
+    - controlla la sintassi;
+    - solo dopo sostituisce il processo IRIS.
 
     La memoria persistente nel database non viene persa. Lo stato
     esclusivamente in-memory della sessione viene invece ricreato dopo
@@ -98,26 +208,33 @@ def main() -> None:
     previous_snapshot = snapshot_python_files()
     process = start_iris()
 
-    print(
-        "[DEV] IRIS avviato in modalità auto-reload."
-    )
-    print(
-        "[DEV] Modifica un file in app/ per applicare automaticamente "
-        "le nuove modifiche."
+    write_dev_log(
+        "Supervisore avviato in modalità auto-reload."
     )
 
     try:
         while True:
             time.sleep(
-                0.5
+                POLL_INTERVAL_SECONDS
             )
 
             current_snapshot = snapshot_python_files()
 
             if current_snapshot != previous_snapshot:
-                print(
-                    "[DEV] Modifica rilevata nei sorgenti: "
-                    "riavvio automatico di IRIS..."
+                settled_snapshot = (
+                    wait_for_stable_snapshot()
+                )
+
+                if settled_snapshot == previous_snapshot:
+                    continue
+
+                if not compile_python_sources():
+                    previous_snapshot = settled_snapshot
+                    continue
+
+                write_dev_log(
+                    "Modifica rilevata nei sorgenti: "
+                    "reload automatico."
                 )
 
                 stop_iris(
@@ -125,10 +242,10 @@ def main() -> None:
                 )
 
                 process = start_iris()
-                previous_snapshot = current_snapshot
+                previous_snapshot = settled_snapshot
 
-                print(
-                    "[DEV] IRIS riavviato."
+                write_dev_log(
+                    "Reload completato."
                 )
 
                 continue
@@ -137,19 +254,22 @@ def main() -> None:
 
             if return_code is not None:
                 if return_code == 0:
+                    write_dev_log(
+                        "IRIS terminato normalmente."
+                    )
                     return
 
-                print(
-                    "[DEV] IRIS terminato con codice "
-                    f"{return_code}; riavvio automatico..."
+                write_dev_log(
+                    "IRIS terminato con codice "
+                    f"{return_code}; riavvio automatico."
                 )
 
                 process = start_iris()
                 previous_snapshot = current_snapshot
 
     except KeyboardInterrupt:
-        print(
-            "\n[DEV] Arresto del supervisore..."
+        write_dev_log(
+            "Arresto del supervisore richiesto."
         )
 
         stop_iris(
