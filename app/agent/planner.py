@@ -634,7 +634,7 @@ class AgentPlanner:
             return None
 
         normalized = re.sub(
-            r"^\\s*/agent\\s+",
+            r"^\s*/agent\s+",
             "",
             goal.strip(),
             flags=re.IGNORECASE,
@@ -791,7 +791,7 @@ class AgentPlanner:
             return None
 
         normalized = re.sub(
-            r"^\\s*/agent\\s+",
+            r"^\s*/agent\s+",
             "",
             goal.strip(),
             flags=re.IGNORECASE,
