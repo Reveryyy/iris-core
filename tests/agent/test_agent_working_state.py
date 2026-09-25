@@ -579,6 +579,18 @@ def test_move_request_never_degrades_to_copy() -> None:
                 },
             },
             {
+                "name": "create_directory",
+                "description": "Crea una directory.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                    },
+                    "required": ["path"],
+                    "additionalProperties": False,
+                },
+            },
+            {
                 "name": "move_path",
                 "description": "Sposta un file.",
                 "input_schema": {
@@ -595,7 +607,75 @@ def test_move_request_never_degrades_to_copy() -> None:
     )
 
     assert router.calls == 0
-    assert plan.steps[0].tool_name == "move_path"
-    assert plan.steps[0].arguments["source"] == source
-    assert plan.steps[0].arguments["destination"] != source
-    assert plan.steps[0].arguments["destination"].startswith(root + "\\")
+    assert plan.steps[0].tool_name == "create_directory"
+    assert plan.steps[1].tool_name == "move_path"
+    assert plan.steps[1].arguments["source"] == source
+    assert plan.steps[1].arguments["destination"].startswith(root + "\\")
+    assert PureWindowsPath(plan.steps[1].arguments["destination"]).parent != PureWindowsPath(source).parent
+
+
+def test_move_request_accepts_descriptive_file_reference() -> None:
+    router = MoveRouter()
+    planner = AgentPlanner(router)
+
+    source = r"C:\Users\picco\IRIS\iris-core\test\file.txt"
+    root = r"C:\Users\picco\IRIS\iris-core"
+
+    context = "\n".join(
+        [
+            "STATO OPERATIVO RECENTE:",
+            json.dumps(
+                {
+                    "tool_name": "read_file",
+                    "arguments": {"path": source},
+                    "output": {
+                        "path": source,
+                        "content": "Testo creato da IRIS.",
+                    },
+                }
+            ),
+            "AMBIENTE REALE DEL PROCESSO:",
+            f"- RADICE GIT DEL PROGETTO: {root}",
+        ]
+    )
+
+    plan = planner.plan(
+        goal="Sposta il file di test in un altra posizione",
+        context=context,
+        tool_definitions=[
+            {
+                "name": "create_directory",
+                "description": "Crea una directory.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                    },
+                    "required": ["path"],
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "name": "move_path",
+                "description": "Sposta un file.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "source": {"type": "string"},
+                        "destination": {"type": "string"},
+                    },
+                    "required": ["source", "destination"],
+                    "additionalProperties": False,
+                },
+            },
+        ],
+    )
+
+    assert router.calls == 0
+    assert len(plan.steps) == 2
+    assert plan.steps[0].tool_name == "create_directory"
+    assert plan.steps[1].tool_name == "move_path"
+    assert plan.steps[1].arguments["source"] == source
+    destination = PureWindowsPath(plan.steps[1].arguments["destination"])
+    assert destination.parent != PureWindowsPath(source).parent
+    assert destination.name == PureWindowsPath(source).name
