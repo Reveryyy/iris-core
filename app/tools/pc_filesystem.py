@@ -3,6 +3,7 @@ from __future__ import annotations
 import fnmatch
 import os
 import stat
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,81 @@ def _isoformat_timestamp(timestamp: float) -> str:
         timestamp,
         tz=timezone.utc,
     ).isoformat()
+
+
+def _find_git_root(path: Path) -> Path | None:
+    current = path.expanduser().resolve(strict=False)
+
+    if current.is_file():
+        current = current.parent
+
+    for candidate in (current, *current.parents):
+        git_marker = candidate / ".git"
+        if git_marker.exists():
+            return candidate
+
+    return None
+
+
+def _discover_git_tracked_paths(
+    path: Path,
+) -> tuple[Path, set[str]] | None:
+    git_root = _find_git_root(path)
+
+    if git_root is None:
+        return None
+
+    try:
+        completed = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(git_root),
+                "ls-files",
+                "-z",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=5.0,
+        )
+    except (
+        OSError,
+        subprocess.SubprocessError,
+    ):
+        return None
+
+    if completed.returncode != 0:
+        return None
+
+    tracked_paths = {
+        item.replace("/", "\\").casefold()
+        for item in completed.stdout.split("\x00")
+        if item
+    }
+
+    return git_root, tracked_paths
+
+
+def _is_git_tracked(
+    path: Path,
+    git_state: tuple[Path, set[str]] | None,
+) -> bool | None:
+    if git_state is None:
+        return None
+
+    git_root, tracked_paths = git_state
+
+    try:
+        relative = path.resolve(strict=False).relative_to(
+            git_root.resolve(strict=False)
+        )
+    except ValueError:
+        return None
+
+    return relative.as_posix().replace("/", "\\").casefold() in tracked_paths
 
 
 def _path_metadata(path: Path) -> dict[str, Any]:
@@ -459,6 +535,7 @@ class SearchFilesTool(Tool):
             )
 
             results: list[dict[str, Any]] = []
+            git_state = _discover_git_tracked_paths(root)
 
             for current_root, directories, files in os.walk(
                 root,
@@ -493,6 +570,10 @@ class SearchFilesTool(Tool):
                     try:
                         metadata = _path_metadata(
                             candidate
+                        )
+                        metadata["is_git_tracked"] = _is_git_tracked(
+                            candidate,
+                            git_state,
                         )
                     except OSError as error:
                         metadata = {
