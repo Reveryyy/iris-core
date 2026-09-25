@@ -8,6 +8,17 @@ from app.tools.dispatcher import ToolDispatcher
 from app.tools.executor import ToolExecutionService
 from app.tools.parser import ToolCallParser
 from app.tools.permissions import Permission, PermissionManager
+from app.tools.pc_filesystem import (
+    InspectPathTool,
+    ListDirectoryTool,
+    SearchFilesTool,
+)
+from app.tools.pc_system import (
+    DiscoverApplicationsTool,
+    DiscoverCommandsTool,
+    DiscoverSystemInfoTool,
+    ListProcessesTool,
+)
 from app.tools.prompt import ToolPromptBuilder
 from app.tools.protocol import ToolProtocolSchema
 from app.tools.registry import ToolRegistry
@@ -34,5 +45,12 @@ __all__ = [
     "PermissionManager",
     "EchoTool",
     "create_tool_system",
+    "InspectPathTool",
+    "ListDirectoryTool",
+    "SearchFilesTool",
+    "DiscoverApplicationsTool",
+    "DiscoverCommandsTool",
+    "DiscoverSystemInfoTool",
+    "ListProcessesTool",
 ]
 
