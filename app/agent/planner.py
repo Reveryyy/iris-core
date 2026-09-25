@@ -505,6 +505,15 @@ class AgentPlanner:
         il Planner LLM generale.
         """
 
+        directory_plan = self._build_directory_creation_fallback(
+            goal=goal,
+            tool_definitions=tool_definitions,
+            context=context,
+        )
+
+        if directory_plan is not None:
+            return directory_plan
+
         file_plan = self._build_file_creation_fallback(
             goal=goal,
             tool_definitions=tool_definitions,
@@ -573,6 +582,108 @@ class AgentPlanner:
             decision=AgentDecision.DONE,
             message=None,
         )
+
+    def _build_directory_creation_fallback(
+        self,
+        goal: str,
+        tool_definitions: list[dict[str, Any]],
+        context: str | None,
+    ) -> AgentPlan | None:
+        """Gestisce richieste generiche di creazione directory dal contesto reale."""
+        if not context:
+            return None
+
+        tool_names = {
+            str(definition.get("name"))
+            for definition in tool_definitions
+            if isinstance(definition, dict)
+        }
+
+        if "create_directory" not in tool_names:
+            return None
+
+        normalized = re.sub(
+            r"^\s*/agent\s+",
+            "",
+            goal.strip(),
+            flags=re.IGNORECASE,
+        )
+
+        normalized_lower = normalized.lower()
+
+        if not (
+            "crea " in normalized_lower
+            and (
+                "cartella" in normalized_lower
+                or "directory" in normalized_lower
+            )
+        ):
+            return None
+
+        parent = self._extract_project_directory(context)
+
+        if parent is None:
+            return None
+
+        name_match = re.search(
+            r"(?:cartella|directory)\s+(?:chiamata|denominata|di nome)\s+[\"']?([^\"'.,;]+)",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+
+        requested_name = (
+            name_match.group(1).strip()
+            if name_match is not None
+            else ""
+        )
+
+        if requested_name:
+            safe_name = Path(requested_name).name.strip()
+        else:
+            safe_name = f"iris-test-{uuid4().hex[:8]}"
+
+        if not safe_name or safe_name in {".", ".."}:
+            safe_name = f"iris-test-{uuid4().hex[:8]}"
+
+        path = str(Path(parent) / safe_name)
+
+        return AgentPlan(
+            goal=goal,
+            steps=(
+                AgentPlanStep(
+                    tool_name="create_directory",
+                    arguments={
+                        "path": path,
+                    },
+                    description=(
+                        "Crea una nuova directory nel percorso di progetto "
+                        "individuato dal sistema."
+                    ),
+                    success_criteria=(
+                        "La directory richiesta esiste nel percorso "
+                        "individuato e può essere usata dagli step successivi."
+                    ),
+                ),
+            ),
+            decision=AgentDecision.DONE,
+            message=None,
+        )
+
+    @staticmethod
+    def _extract_project_directory(context: str) -> str | None:
+        prefixes = (
+            "- RADICE GIT DEL PROGETTO: ",
+            "- DIRECTORY DI LAVORO CORRENTE: ",
+        )
+
+        for line in context.splitlines():
+            for prefix in prefixes:
+                if line.startswith(prefix):
+                    value = line[len(prefix):].strip()
+                    if value:
+                        return value
+
+        return None
 
     def _build_file_creation_fallback(
         self,
@@ -1420,6 +1531,11 @@ class AgentPlanner:
             "- usa lo STATO OPERATIVO RECENTE come fonte reale per i risultati "
             "delle richieste agent precedenti; risolvi riferimenti come 'quella "
             "cartella' usando i percorsi osservati, senza inventarne di nuovi;\n"
+            "- per richieste semplici di creazione di una nuova cartella o "
+            "directory, usa la directory di progetto reale fornita dal contesto "
+            "e crea il percorso necessario; non trasformare una richiesta "
+            "semplice in ask_user solo perché il modello non ha costruito "
+            "correttamente il JSON;\n"
             "- il contesto può contenere dati ambientali reali del processo, "
             "come la directory di lavoro corrente e la radice Git del progetto;\n"
             "- per richieste come 'directory del progetto', usa esattamente "
