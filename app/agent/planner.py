@@ -802,7 +802,10 @@ class AgentPlanner:
         )
         normalized_lower = normalized.lower()
 
-        if "sposta" not in normalized_lower:
+        if (
+            "sposta" not in normalized_lower
+            or "file" not in normalized_lower
+        ):
             return None
 
         source = self._extract_recent_file(context)
@@ -813,6 +816,11 @@ class AgentPlanner:
 
         source_path = Path(source).resolve(strict=False)
         root_path = Path(destination_root).resolve(strict=False)
+
+        # Per riferimenti generici come "il file", "quel file" o
+        # "il file di test", usa sempre l'ultima posizione verificata
+        # del file e crea una directory nuova per garantire che lo
+        # spostamento sia reale e osservabile.
         destination_parent = root_path / f"iris-move-{uuid4().hex[:8]}"
         destination = destination_parent / source_path.name
 
