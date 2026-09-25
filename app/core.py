@@ -1,4 +1,6 @@
 import json
+import os
+import subprocess
 from time import perf_counter
 from typing import Any
 
@@ -194,6 +196,13 @@ class IRISCore:
 
         parts: list[str] = []
 
+        runtime_context = self._build_runtime_agent_context()
+
+        if runtime_context:
+            parts.append(
+                runtime_context
+            )
+
         if personality_context:
             parts.append(
                 "PERSONALITÀ E CONTESTO:\n"
@@ -208,6 +217,51 @@ class IRISCore:
         return "\n\n".join(
             parts
         )
+
+    @staticmethod
+    def _build_runtime_agent_context() -> str:
+        """
+        Espone al Planner informazioni ambientali reali del processo.
+
+        Il contesto non impone allowlist o percorsi: fornisce soltanto
+        coordinate di partenza che il sistema operativo conosce già.
+        """
+        cwd = os.getcwd()
+        lines = [
+            "AMBIENTE REALE DEL PROCESSO:",
+            f"- DIRECTORY DI LAVORO CORRENTE: {cwd}",
+        ]
+
+        try:
+            completed = subprocess.run(
+                [
+                    "git",
+                    "rev-parse",
+                    "--show-toplevel",
+                ],
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=2.0,
+                stdin=subprocess.DEVNULL,
+                shell=False,
+            )
+        except (
+            OSError,
+            subprocess.SubprocessError,
+        ):
+            completed = None
+
+        if completed is not None and completed.returncode == 0:
+            git_root = completed.stdout.strip()
+
+            if git_root:
+                lines.append(
+                    f"- RADICE GIT DEL PROGETTO: {git_root}"
+                )
+
+        return "\\n".join(lines)
 
     def _remember_agent_result(
         self,
