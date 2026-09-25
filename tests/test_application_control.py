@@ -885,6 +885,12 @@ def test_open_application_handles_launch_failure(
 
     monkeypatch.setattr(
         tool,
+        "_discover_processes",
+        lambda: [],
+    )
+
+    monkeypatch.setattr(
+        tool,
         "_launch",
         fail_launch,
     )
