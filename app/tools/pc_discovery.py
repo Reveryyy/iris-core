@@ -30,7 +30,7 @@ class DiscoverPCStateTool(Tool):
     def __init__(
         self,
         include_processes: bool = True,
-        max_processes: int = 100,
+        max_processes: int | None = None,
     ) -> None:
         self.include_processes = include_processes
         self.max_processes = max_processes
@@ -115,8 +115,15 @@ class DiscoverPCStateTool(Tool):
             )
 
             if include_processes:
+                processes = self._discover_processes()
+
+                if self.max_processes is not None:
+                    processes = processes[
+                        : self.max_processes
+                    ]
+
                 state.processes.extend(
-                    self._discover_processes()
+                    processes
                 )
 
             user_message = self._build_user_message(
@@ -129,7 +136,11 @@ class DiscoverPCStateTool(Tool):
                 output={
                     # Dati completi per Planner / Agent Loop.
                     "state": state.to_context(
-                        max_items=self.max_processes
+                        max_items=(
+                            self.max_processes
+                            if self.max_processes is not None
+                            else None
+                        )
                     ),
 
                     "platform": state.platform,
@@ -358,7 +369,10 @@ class DiscoverPCStateTool(Tool):
                 )
             )
 
-            if len(processes) >= self.max_processes:
+            if (
+                self.max_processes is not None
+                and len(processes) >= self.max_processes
+            ):
                 break
 
         return processes
@@ -427,7 +441,10 @@ class DiscoverPCStateTool(Tool):
                 )
             )
 
-            if len(processes) >= self.max_processes:
+            if (
+                self.max_processes is not None
+                and len(processes) >= self.max_processes
+            ):
                 break
 
         return processes
