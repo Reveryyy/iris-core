@@ -178,6 +178,52 @@ def test_search_files_can_include_directories(tmp_path) -> None:
     assert str(directory.resolve()) in paths
 
 
+
+def test_search_files_exposes_git_tracking_state(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    (tmp_path / ".git").mkdir()
+
+    tracked = tmp_path / "tracked.txt"
+    untracked = tmp_path / "test_file.txt"
+
+    tracked.write_text("tracked", encoding="utf-8")
+    untracked.write_text("untracked", encoding="utf-8")
+
+    tracked_relative = tracked.name
+
+    def fake_git(*args, **kwargs):
+        return subprocess.CompletedProcess(
+            args=args[0] if args else [],
+            returncode=0,
+            stdout=f"{tracked_relative}\x00",
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        "app.tools.pc_filesystem.subprocess.run",
+        fake_git,
+    )
+
+    result = SearchFilesTool().execute(
+        {
+            "query": "*.txt",
+            "location": str(tmp_path),
+        }
+    )
+
+    assert result.success is True
+
+    by_name = {
+        entry["name"]: entry
+        for entry in result.output["results"]
+    }
+
+    assert by_name["tracked.txt"]["is_git_tracked"] is True
+    assert by_name["test_file.txt"]["is_git_tracked"] is False
+
+
 def test_search_files_requires_location() -> None:
     result = SearchFilesTool().execute(
         {
