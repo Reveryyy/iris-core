@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+
 from app.tools.pc_filesystem import (
     InspectPathTool,
     ListDirectoryTool,
