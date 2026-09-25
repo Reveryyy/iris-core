@@ -112,12 +112,7 @@ foreach ($window in $windows) {
     try {
         $name = $window.Current.Name
 
-        if (
-            $name -and (
-                $name -like "*$query*"
-                -or $query -like "*$name*"
-            )
-        ) {
+        if ($name -and (($name -like "*$query*") -or ($query -like "*$name*"))) {
             $targetWindow = $window
             break
         }
