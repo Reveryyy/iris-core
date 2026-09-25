@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from uuid import uuid4
 from dataclasses import dataclass
 from typing import Any
 
@@ -439,6 +440,7 @@ class AgentPlanner:
         fallback_plan = self._build_fallback_plan(
             goal=goal,
             tool_definitions=available_tools,
+            context=context,
         )
 
         if fallback_plan is not None:
@@ -490,6 +492,7 @@ class AgentPlanner:
         self,
         goal: str,
         tool_definitions: list[dict[str, Any]],
+        context: str | None = None,
     ) -> AgentPlan | None:
         """
         Costruisce un piano minimo quando l'LLM non riesce a farlo.
@@ -501,6 +504,15 @@ class AgentPlanner:
         Non contiene una allowlist di applicazioni e non sostituisce
         il Planner LLM generale.
         """
+
+        file_plan = self._build_file_creation_fallback(
+            goal=goal,
+            tool_definitions=tool_definitions,
+            context=context,
+        )
+
+        if file_plan is not None:
+            return file_plan
 
         tool_names = {
             str(
@@ -561,6 +573,134 @@ class AgentPlanner:
             decision=AgentDecision.DONE,
             message=None,
         )
+
+    def _build_file_creation_fallback(
+        self,
+        goal: str,
+        tool_definitions: list[dict[str, Any]],
+        context: str | None,
+    ) -> AgentPlan | None:
+        """Gestisce richieste generiche di creazione file usando stato verificato."""
+        if not context:
+            return None
+
+        tool_names = {
+            str(definition.get("name"))
+            for definition in tool_definitions
+            if isinstance(definition, dict)
+        }
+
+        if "write_file" not in tool_names:
+            return None
+
+        normalized = re.sub(
+            r"^\\s*/agent\\s+",
+            "",
+            goal.strip(),
+            flags=re.IGNORECASE,
+        ).lower()
+
+        if "crea" not in normalized or "file" not in normalized:
+            return None
+
+        references_directory = any(
+            marker in normalized
+            for marker in (
+                "quella cartella",
+                "questa cartella",
+                "la cartella",
+                "nella cartella",
+            )
+        )
+
+        if not references_directory:
+            return None
+
+        directory = self._extract_recent_directory(context)
+
+        if directory is None:
+            return None
+
+        filename_match = re.search(
+            r"(?:file|un file)\\s+(?:chiamato|denominato|di nome)\\s+[\\\"']?([^\\\"'.,;]+)",
+            goal,
+            flags=re.IGNORECASE,
+        )
+
+        filename = (
+            filename_match.group(1).strip()
+            if filename_match is not None
+            else f"{uuid4().hex}.txt"
+        )
+
+        if not filename:
+            filename = f"{uuid4().hex}.txt"
+
+        content_match = re.search(
+            r"scriv(?:i|ici)\\s+(?:dentro(?:ci)?\\s+)?[\\\"“‘]([^\\\"”’]+)[\\\"”’]",
+            goal,
+            flags=re.IGNORECASE,
+        )
+
+        content = (
+            content_match.group(1).strip()
+            if content_match is not None
+            else "Testo creato da IRIS."
+        )
+
+        path = str(Path(directory) / filename)
+
+        return AgentPlan(
+            goal=goal,
+            steps=(
+                AgentPlanStep(
+                    tool_name="write_file",
+                    arguments={
+                        "path": path,
+                        "content": content,
+                    },
+                    description=(
+                        f"Crea un file nella directory già individuata e "
+                        "scrivici il testo richiesto."
+                    ),
+                    success_criteria=(
+                        "Il file esiste nella directory individuata e "
+                        "contiene il testo richiesto o il testo generato "
+                        "per una richiesta volutamente generica."
+                    ),
+                ),
+            ),
+            decision=AgentDecision.DONE,
+            message=None,
+        )
+
+    @staticmethod
+    def _extract_recent_directory(context: str) -> str | None:
+        for line in context.splitlines():
+            try:
+                value = json.loads(line)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+
+            if not isinstance(value, dict):
+                continue
+
+            output = value.get("output")
+            if not isinstance(output, dict):
+                continue
+
+            path = output.get("path")
+            if not isinstance(path, str) or not path.strip():
+                continue
+
+            if (
+                output.get("type") == "directory"
+                or output.get("is_directory") is True
+                or value.get("tool_name") == "create_directory"
+            ):
+                return path
+
+        return None
 
     @classmethod
     def _extract_application_open_requests(
@@ -1277,6 +1417,9 @@ class AgentPlanner:
             "- se un'informazione può essere ottenuta interrogando "
             "il PC, non chiedere all'utente di fornirla a meno che "
             "l'informazione non sia realmente non disponibile;\n"
+            "- usa lo STATO OPERATIVO RECENTE come fonte reale per i risultati "
+            "delle richieste agent precedenti; risolvi riferimenti come 'quella "
+            "cartella' usando i percorsi osservati, senza inventarne di nuovi;\n"
             "- il contesto può contenere dati ambientali reali del processo, "
             "come la directory di lavoro corrente e la radice Git del progetto;\n"
             "- per richieste come 'directory del progetto', usa esattamente "
