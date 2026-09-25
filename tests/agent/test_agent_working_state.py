@@ -370,3 +370,94 @@ def test_generic_copy_creates_secondary_directory_when_project_root_is_source_pa
     assert plan.steps[0].tool_name == "create_directory"
     assert plan.steps[1].tool_name == "copy_path"
     assert plan.steps[1].arguments["source"] == source
+
+
+class MoveRouter:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def generate(self, *args, **kwargs):
+        self.calls += 1
+        return json.dumps(
+            {
+                "goal": "sposta quel file",
+                "decision": "done",
+                "message": None,
+                "steps": [
+                    {
+                        "tool_name": "copy_path",
+                        "arguments": {
+                            "source": r"C:\Users\picco\IRIS\iris-core\test\file.txt",
+                            "destination": r"C:\Users\picco\IRIS\iris-core\test\file.txt",
+                        },
+                        "description": "Copia il file.",
+                        "success_criteria": "Il file è disponibile.",
+                    }
+                ],
+            }
+        )
+
+
+def test_move_request_never_degrades_to_copy() -> None:
+    router = MoveRouter()
+    planner = AgentPlanner(router)
+
+    source = r"C:\Users\picco\IRIS\iris-core\test\file.txt"
+    root = r"C:\Users\picco\IRIS\iris-core"
+
+    context = "\n".join(
+        [
+            "STATO OPERATIVO RECENTE:",
+            json.dumps(
+                {
+                    "tool_name": "read_file",
+                    "arguments": {"path": source},
+                    "output": {
+                        "path": source,
+                        "content": "Testo creato da IRIS.",
+                    },
+                }
+            ),
+            "AMBIENTE REALE DEL PROCESSO:",
+            f"- RADICE GIT DEL PROGETTO: {root}",
+        ]
+    )
+
+    plan = planner.plan(
+        goal="sposta quel file",
+        context=context,
+        tool_definitions=[
+            {
+                "name": "copy_path",
+                "description": "Copia un file.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "source": {"type": "string"},
+                        "destination": {"type": "string"},
+                    },
+                    "required": ["source", "destination"],
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "name": "move_path",
+                "description": "Sposta un file.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "source": {"type": "string"},
+                        "destination": {"type": "string"},
+                    },
+                    "required": ["source", "destination"],
+                    "additionalProperties": False,
+                },
+            },
+        ],
+    )
+
+    assert router.calls == 0
+    assert plan.steps[0].tool_name == "move_path"
+    assert plan.steps[0].arguments["source"] == source
+    assert plan.steps[0].arguments["destination"] != source
+    assert plan.steps[0].arguments["destination"].startswith(root + "\\")
