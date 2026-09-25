@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import PureWindowsPath
 
+from app.agent.observation import AgentObservation
 from app.agent.planner import AgentPlanner
 from app.core import IRISCore
 
