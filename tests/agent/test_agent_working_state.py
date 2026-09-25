@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from pathlib import PureWindowsPath
 
 from app.agent.planner import AgentPlanner
 from app.core import IRISCore
@@ -152,4 +152,4 @@ def test_directory_creation_fallback_uses_real_project_directory() -> None:
     path = plan.steps[0].arguments["path"]
     assert path.startswith(r"C:\Users\picco\IRIS\iris-core\")
     assert "workspace" not in path.lower()
-    assert Path(path).name.startswith("iris-test-")
+    assert PureWindowsPath(path).name.startswith("iris-test-")
