@@ -47,6 +47,8 @@ class IRISCore:
             or IRISEventBus()
         )
 
+        self._recent_agent_state: list[dict[str, Any]] = []
+
     def chat(
         self,
         message: str,
@@ -197,6 +199,12 @@ class IRISCore:
         parts: list[str] = []
 
         runtime_context = self._build_runtime_agent_context()
+        recent_agent_context = self._build_recent_agent_context()
+
+        if recent_agent_context:
+            parts.append(
+                recent_agent_context
+            )
 
         if runtime_context:
             parts.append(
@@ -217,6 +225,29 @@ class IRISCore:
         return "\n\n".join(
             parts
         )
+
+    def _build_recent_agent_context(self) -> str:
+        """Espone al Planner gli ultimi risultati agent verificati."""
+        if not self._recent_agent_state:
+            return ""
+
+        lines = [
+            "STATO OPERATIVO RECENTE:",
+            "Le osservazioni seguenti derivano da azioni già eseguite e verificate "
+            "nelle richieste agent precedenti. Usale come stato reale del PC e "
+            "come riferimento per espressioni come 'quella cartella' o 'quel file'.",
+        ]
+
+        for observation in reversed(self._recent_agent_state):
+            lines.append(
+                json.dumps(
+                    observation,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            )
+
+        return "\\n".join(lines)
 
     @staticmethod
     def _build_runtime_agent_context() -> str:
@@ -274,6 +305,14 @@ class IRISCore:
                 continue
 
             tool_result = step_result.tool_result
+
+            self._recent_agent_state.append(
+                {
+                    "tool_name": step_result.tool_call.name,
+                    "arguments": step_result.tool_call.arguments,
+                    "output": tool_result.output,
+                }
+            )
 
             output = (
                 tool_result.output
