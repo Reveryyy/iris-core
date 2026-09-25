@@ -459,6 +459,75 @@ def test_move_request_with_agent_prefix_never_uses_copy() -> None:
     assert plan.steps[0].arguments["source"] == source
     assert plan.steps[0].arguments["destination"] != source
 
+def test_move_request_uses_recent_copy_destination() -> None:
+    router = MoveRouter()
+    planner = AgentPlanner(router)
+
+    source = r"C:\Users\picco\IRIS\iris-core\test\file.txt"
+    copied = r"C:\Users\picco\IRIS\iris-core\file-copy.txt"
+    root = r"C:\Users\picco\IRIS\iris-core"
+
+    context = "\n".join(
+        [
+            "STATO OPERATIVO RECENTE:",
+            json.dumps(
+                {
+                    "tool_name": "copy_path",
+                    "arguments": {
+                        "source": source,
+                        "destination": copied,
+                    },
+                    "output": {
+                        "source": source,
+                        "destination": copied,
+                        "verified_destination_exists": True,
+                    },
+                }
+            ),
+            "AMBIENTE REALE DEL PROCESSO:",
+            f"- RADICE GIT DEL PROGETTO: {root}",
+        ]
+    )
+
+    plan = planner.plan(
+        goal="sposta quel file",
+        context=context,
+        tool_definitions=[
+            {
+                "name": "copy_path",
+                "description": "Copia un file.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "source": {"type": "string"},
+                        "destination": {"type": "string"},
+                    },
+                    "required": ["source", "destination"],
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "name": "move_path",
+                "description": "Sposta un file.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "source": {"type": "string"},
+                        "destination": {"type": "string"},
+                    },
+                    "required": ["source", "destination"],
+                    "additionalProperties": False,
+                },
+            },
+        ],
+    )
+
+    assert router.calls == 0
+    assert plan.steps[0].tool_name == "move_path"
+    assert plan.steps[0].arguments["source"] == copied
+    assert plan.steps[0].arguments["destination"] != copied
+
+
 def test_move_request_never_degrades_to_copy() -> None:
     router = MoveRouter()
     planner = AgentPlanner(router)
