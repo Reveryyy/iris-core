@@ -85,6 +85,9 @@ from app.tools.pc_window_discovery import (
 from app.tools.pc_ui import (
     ListUIElementsTool,
 )
+from app.tools.pc_ui_interaction import (
+    InteractUIElementTool,
+)
 from app.tools.permissions import (
     Permission,
     PermissionManager,
@@ -312,6 +315,10 @@ def main() -> None:
 
     tool_registry.register(
         ListUIElementsTool()
+    )
+
+    tool_registry.register(
+        InteractUIElementTool()
     )
 
     tool_registry.register(
