@@ -24,18 +24,28 @@ def test_discover_system_info_returns_dynamic_environment() -> None:
 
 def test_discover_commands_uses_actual_path(tmp_path) -> None:
     command_name = "iris-dynamic-command"
-    executable = tmp_path / command_name
-    executable.write_text(
-        "#!/bin/sh\necho iris",
-        encoding="utf-8",
-    )
-    executable.chmod(
-        executable.stat().st_mode | 0o111
-    )
+
+    if os.name == "nt":
+        executable = tmp_path / f"{command_name}.cmd"
+        executable.write_text(
+            "@echo off\necho iris",
+            encoding="utf-8",
+        )
+        pathext = ".CMD"
+    else:
+        executable = tmp_path / command_name
+        executable.write_text(
+            "#!/bin/sh\necho iris",
+            encoding="utf-8",
+        )
+        executable.chmod(
+            executable.stat().st_mode | 0o111
+        )
+        pathext = ""
 
     tool = DiscoverCommandsTool(
         path_environment=str(tmp_path),
-        pathext_environment="",
+        pathext_environment=pathext,
     )
 
     result = tool.execute({})
