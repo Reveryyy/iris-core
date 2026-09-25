@@ -536,6 +536,160 @@ def test_move_request_uses_recent_copy_destination() -> None:
     assert destination.name == PureWindowsPath(copied).name
 
 
+def test_move_request_discovers_described_file_after_session_restart() -> None:
+    router = MoveRouter()
+    planner = AgentPlanner(router)
+
+    root = r"C:\Users\picco\IRIS\iris-core"
+
+    plan = planner.plan(
+        goal="Sposta il file di test in un altra posizione",
+        context=(
+            "AMBIENTE REALE DEL PROCESSO:\n"
+            f"- RADICE GIT DEL PROGETTO: {root}\n"
+        ),
+        tool_definitions=[
+            {
+                "name": "search_files",
+                "description": "Cerca file.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "location": {"type": "string"},
+                        "include_directories": {"type": "boolean"},
+                        "case_sensitive": {"type": "boolean"},
+                    },
+                    "required": ["query", "location"],
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "name": "create_directory",
+                "description": "Crea una directory.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                    },
+                    "required": ["path"],
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "name": "move_path",
+                "description": "Sposta un file.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "source": {"type": "string"},
+                        "destination": {"type": "string"},
+                    },
+                    "required": ["source", "destination"],
+                    "additionalProperties": False,
+                },
+            },
+        ],
+    )
+
+    assert router.calls == 0
+    assert len(plan.steps) == 1
+    assert plan.steps[0].tool_name == "search_files"
+    assert plan.steps[0].arguments["query"] == "*test*"
+    assert plan.steps[0].arguments["location"] == root
+
+
+def test_move_request_uses_unique_search_result_as_source() -> None:
+    planner = AgentPlanner(MoveRouter())
+
+    source = r"C:\Users\picco\IRIS\iris-core\test_file4598589343584980934093540934.txt"
+    root = r"C:\Users\picco\IRIS\iris-core"
+
+    context = "\n".join(
+        [
+            "AMBIENTE REALE DEL PROCESSO:",
+            f"- RADICE GIT DEL PROGETTO: {root}",
+            "STATO ESECUZIONE:",
+            json.dumps(
+                {
+                    "tool_name": "search_files",
+                    "arguments": {
+                        "query": "*test*",
+                        "location": root,
+                    },
+                    "output": {
+                        "query": "*test*",
+                        "location": root,
+                        "results": [
+                            {
+                                "path": source,
+                                "name": "test_file4598589343584980934093540934.txt",
+                                "type": "file",
+                                "is_file": True,
+                                "is_directory": False,
+                            }
+                        ],
+                        "count": 1,
+                    },
+                }
+            ),
+        ]
+    )
+
+    plan = planner.plan(
+        goal="Sposta il file di test in un altra posizione",
+        context=context,
+        tool_definitions=[
+            {
+                "name": "search_files",
+                "description": "Cerca file.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "location": {"type": "string"},
+                        "include_directories": {"type": "boolean"},
+                        "case_sensitive": {"type": "boolean"},
+                    },
+                    "required": ["query", "location"],
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "name": "create_directory",
+                "description": "Crea una directory.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                    },
+                    "required": ["path"],
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "name": "move_path",
+                "description": "Sposta un file.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "source": {"type": "string"},
+                        "destination": {"type": "string"},
+                    },
+                    "required": ["source", "destination"],
+                    "additionalProperties": False,
+                },
+            },
+        ],
+    )
+
+    assert len(plan.steps) == 2
+    assert plan.steps[0].tool_name == "create_directory"
+    assert plan.steps[1].tool_name == "move_path"
+    assert plan.steps[1].arguments["source"] == source
+    assert PureWindowsPath(plan.steps[1].arguments["destination"]).parent != PureWindowsPath(source).parent
+
+
 def test_move_request_never_degrades_to_copy() -> None:
     router = MoveRouter()
     planner = AgentPlanner(router)
