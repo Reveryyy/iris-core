@@ -48,6 +48,11 @@ from app.tools.pc import (
     RunCommandTool,
     WriteFileTool,
 )
+from app.tools.pc_filesystem import (
+    InspectPathTool,
+    ListDirectoryTool,
+    SearchFilesTool,
+)
 from app.tools.pc_clipboard import (
     GetClipboardTool,
     SetClipboardTool,
@@ -329,19 +334,23 @@ def main() -> None:
     # =========================================================================
 
     tool_registry.register(
-        ReadFileTool(
-            allowed_roots=[
-                iris_directory,
-            ]
-        )
+        InspectPathTool()
     )
 
     tool_registry.register(
-        WriteFileTool(
-            allowed_roots=[
-                iris_directory,
-            ]
-        )
+        ListDirectoryTool()
+    )
+
+    tool_registry.register(
+        SearchFilesTool()
+    )
+
+    tool_registry.register(
+        ReadFileTool()
+    )
+
+    tool_registry.register(
+        WriteFileTool()
     )
 
     # =========================================================================
