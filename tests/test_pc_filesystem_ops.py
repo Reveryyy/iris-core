@@ -110,6 +110,24 @@ def test_move_path_moves_file(tmp_path) -> None:
     ) == "IRIS"
 
 
+def test_move_path_rejects_same_source_and_destination(tmp_path) -> None:
+    source = tmp_path / "source.txt"
+    source.write_text(
+        "IRIS",
+        encoding="utf-8",
+    )
+
+    result = MovePathTool().execute(
+        {
+            "source": str(source),
+            "destination": str(source),
+        }
+    )
+
+    assert result.success is False
+    assert "no-op" in result.error.lower()
+
+
 def test_open_path_rejects_missing_path(tmp_path) -> None:
     result = OpenPathTool().execute(
         {
