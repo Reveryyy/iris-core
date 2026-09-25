@@ -302,29 +302,56 @@ if ($null -eq $best) {
 try {
     $current = $best.Current
     $resultMessage = $null
+    $verified = $false
 
     switch ($action) {
         "click" {
             $pattern = $null
 
             if (
-                $best.TryGetCurrentPattern(
+                -not $best.TryGetCurrentPattern(
                     [System.Windows.Automation.InvokePattern]::Pattern,
                     [ref]$pattern
                 )
             ) {
-                $pattern.Invoke()
-                $resultMessage = "invoke"
+                throw "Il controllo non espone InvokePattern."
             }
-            else {
-                $best.SetFocus()
-                $resultMessage = "focus_only"
-            }
+
+            $pattern.Invoke()
+            $resultMessage = "invoke"
+            $verified = $true
         }
 
         "focus" {
             $best.SetFocus()
+
+            $focused = [
+                System.Windows.Automation.AutomationElement
+            ]::FocusedElement
+
+            if (
+                $null -eq $focused
+                -or
+                $focused.Current.NativeWindowHandle -ne
+                    $current.NativeWindowHandle
+            ) {
+                # Alcuni controlli condividono lo stesso HWND.
+                # Verifichiamo anche Name e AutomationId.
+                $focusedCurrent = $focused.Current
+
+                if (
+                    [string]$focusedCurrent.Name -ne
+                        [string]$current.Name
+                    -or
+                    [string]$focusedCurrent.AutomationId -ne
+                        [string]$current.AutomationId
+                ) {
+                    throw "Il controllo non risulta focalizzato."
+                }
+            }
+
             $resultMessage = "focus"
+            $verified = $true
         }
 
         "set_text" {
@@ -349,7 +376,14 @@ try {
                 [string]$value
             )
 
+            if (
+                [string]$pattern.Current.Value -ne [string]$value
+            ) {
+                throw "Il valore del controllo non coincide con quello richiesto."
+            }
+
             $resultMessage = "set_text"
+            $verified = $true
         }
 
         "toggle" {
@@ -364,8 +398,16 @@ try {
                 throw "Il controllo non espone TogglePattern."
             }
 
+            $before = $pattern.Current.ToggleState
             $pattern.Toggle()
+            $after = $pattern.Current.ToggleState
+
+            if ($before -eq $after) {
+                throw "Lo stato del controllo non è cambiato."
+            }
+
             $resultMessage = "toggle"
+            $verified = $true
         }
 
         "select" {
@@ -381,7 +423,13 @@ try {
             }
 
             $pattern.Select()
+
+            if (-not $pattern.Current.IsSelected) {
+                throw "Il controllo non risulta selezionato."
+            }
+
             $resultMessage = "select"
+            $verified = $true
         }
 
         "expand" {
@@ -397,7 +445,16 @@ try {
             }
 
             $pattern.Expand()
+
+            if (
+                $pattern.Current.ExpandCollapseState
+                -ne [System.Windows.Automation.ExpandCollapseState]::Expanded
+            ) {
+                throw "Il controllo non risulta espanso."
+            }
+
             $resultMessage = "expand"
+            $verified = $true
         }
 
         "collapse" {
@@ -413,25 +470,34 @@ try {
             }
 
             $pattern.Collapse()
+
+            if (
+                $pattern.Current.ExpandCollapseState
+                -ne [System.Windows.Automation.ExpandCollapseState]::Collapsed
+            ) {
+                throw "Il controllo non risulta compresso."
+            }
+
             $resultMessage = "collapse"
+            $verified = $true
         }
 
         "scroll_into_view" {
             $pattern = $null
 
             if (
-                $best.TryGetCurrentPattern(
+                -not $best.TryGetCurrentPattern(
                     [System.Windows.Automation.ScrollItemPattern]::Pattern,
                     [ref]$pattern
                 )
             ) {
-                $pattern.ScrollIntoView()
-                $resultMessage = "scroll_into_view"
+                throw "Il controllo non espone ScrollItemPattern."
             }
-            else {
-                $best.SetFocus()
-                $resultMessage = "focus_only"
-            }
+
+            $pattern.ScrollIntoView()
+
+            $resultMessage = "scroll_into_view"
+            $verified = $true
         }
     }
 
@@ -444,6 +510,7 @@ try {
         control_type = [string]$current.ControlType.ProgrammaticName
         action = $action
         result = $resultMessage
+        verified = [bool]$verified
     } | ConvertTo-Json -Compress
 }
 catch {
