@@ -226,7 +226,7 @@ def test_plan_prefers_verified_directory_over_llm_file_path() -> None:
     assert router.calls == 0
     assert plan.steps[0].tool_name == "write_file"
     assert plan.steps[0].arguments["path"].startswith(
-        r"C:\Users\picco\IRIS\iris-core\test\"
+        "C:\\Users\\picco\\IRIS\\iris-core\\test\\"
     )
     assert plan.steps[0].arguments["path"] != (
         r"C:\Users\picco\IRIS\iris-core\test"
