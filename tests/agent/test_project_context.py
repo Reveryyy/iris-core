@@ -49,4 +49,4 @@ def test_planner_forbids_invented_project_paths() -> None:
 
     assert "RADICE GIT DEL PROGETTO" in prompt
     assert "non inventare mai percorsi" in prompt
-    assert r"C:\workspace" in prompt
+    assert "non sintetizzare o inventare percorsi assoluti" in prompt
