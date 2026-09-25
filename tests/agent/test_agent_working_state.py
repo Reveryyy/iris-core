@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from app.agent.planner import AgentPlanner
 from app.core import IRISCore
@@ -116,3 +117,39 @@ def test_core_recent_agent_context_preserves_structured_observation_lines() -> N
 
     assert lines[0] == "STATO OPERATIVO RECENTE:"
     assert json.loads(lines[2])["output"]["path"] == "/tmp/test-dir"
+
+
+def test_directory_creation_fallback_uses_real_project_directory() -> None:
+    planner = AgentPlanner(FakeRouter())
+
+    context = (
+        "AMBIENTE REALE DEL PROCESSO:\n"
+        "- DIRECTORY DI LAVORO CORRENTE: C:\\Users\\picco\\IRIS\\iris-core\n"
+        "- RADICE GIT DEL PROGETTO: C:\\Users\\picco\\IRIS\\iris-core\n"
+    )
+
+    plan = planner._build_fallback_plan(
+        goal="crea una nuova cartella di test",
+        tool_definitions=[
+            {
+                "name": "create_directory",
+                "description": "Crea una directory.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                    },
+                    "required": ["path"],
+                    "additionalProperties": False,
+                },
+            }
+        ],
+        context=context,
+    )
+
+    assert plan is not None
+    assert plan.steps[0].tool_name == "create_directory"
+    path = plan.steps[0].arguments["path"]
+    assert path.startswith(r"C:\Users\picco\IRIS\iris-core\")
+    assert "workspace" not in path.lower()
+    assert Path(path).name.startswith("iris-test-")
