@@ -309,7 +309,7 @@ def test_generic_copy_uses_recent_file_and_project_root() -> None:
     assert plan.steps[0].tool_name == "copy_path"
     assert plan.steps[0].arguments["source"] == source
     destination = plan.steps[0].arguments["destination"]
-    assert destination.startswith(root + "\")
+    assert destination.startswith(root + "\\")
     assert destination != source
     assert PureWindowsPath(destination).suffix == ".txt"
 
