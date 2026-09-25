@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -93,8 +94,6 @@ class OpenPathTool(Tool):
                     if os.uname().sysname == "Darwin"
                     else "xdg-open"
                 )
-                import subprocess
-
                 subprocess.Popen(
                     [opener, str(resolved)],
                     stdin=subprocess.DEVNULL,
@@ -325,35 +324,37 @@ class CopyPathTool(Tool):
                     resolved_destination,
                     dirs_exist_ok=True,
                 )
+
+                verified_target = resolved_destination
             else:
-                target = resolved_destination
+                verified_target = resolved_destination
 
                 if (
                     resolved_destination.exists()
                     and resolved_destination.is_dir()
                 ):
-                    target = (
+                    verified_target = (
                         resolved_destination
                         / resolved_source.name
                     )
 
-                target.parent.mkdir(
+                verified_target.parent.mkdir(
                     parents=True,
                     exist_ok=True,
                 )
 
                 shutil.copy2(
                     resolved_source,
-                    target,
+                    verified_target,
                 )
 
             return ToolResult(
                 success=True,
                 output={
                     "source": str(resolved_source),
-                    "destination": str(resolved_destination),
+                    "destination": str(verified_target),
                     "verified_destination_exists": (
-                        resolved_destination.exists()
+                        verified_target.exists()
                     ),
                 },
             )
