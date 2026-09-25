@@ -14,6 +14,56 @@ MOUSEEVENTF_MOVE = 0x0001
 MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
 
+SM_XVIRTUALSCREEN = 76
+SM_YVIRTUALSCREEN = 77
+SM_CXVIRTUALSCREEN = 78
+SM_CYVIRTUALSCREEN = 79
+
+
+def _virtual_screen_bounds(
+    user32: Any,
+) -> tuple[int, int, int, int]:
+    get_metrics = user32.GetSystemMetrics
+
+    if hasattr(
+        get_metrics,
+        "argtypes",
+    ):
+        get_metrics.argtypes = [
+            ctypes.c_int,
+        ]
+
+    if hasattr(
+        get_metrics,
+        "restype",
+    ):
+        get_metrics.restype = ctypes.c_int
+
+    left = get_metrics(
+        SM_XVIRTUALSCREEN
+    )
+    top = get_metrics(
+        SM_YVIRTUALSCREEN
+    )
+    width = get_metrics(
+        SM_CXVIRTUALSCREEN
+    )
+    height = get_metrics(
+        SM_CYVIRTUALSCREEN
+    )
+
+    if width <= 0 or height <= 0:
+        raise OSError(
+            "Impossibile determinare il desktop virtuale."
+        )
+
+    return (
+        left,
+        top,
+        width,
+        height,
+    )
+
 
 class ClickMouseTool(Tool):
     """
@@ -42,7 +92,6 @@ class ClickMouseTool(Tool):
                         "description": (
                             "Coordinata orizzontale del click."
                         ),
-                        "minimum": 0,
                     },
                     "y": {
                         "type": "integer",
@@ -90,14 +139,6 @@ class ClickMouseTool(Tool):
                 error="La coordinata 'y' deve essere un intero.",
             )
 
-        if x < 0 or y < 0:
-            return ToolResult(
-                success=False,
-                error=(
-                    "Le coordinate del mouse non possono essere negative."
-                ),
-            )
-
         if not hasattr(
             ctypes,
             "windll",
@@ -112,25 +153,40 @@ class ClickMouseTool(Tool):
 
         user32 = ctypes.windll.user32
 
-        screen_width = user32.GetSystemMetrics(0)
-        screen_height = user32.GetSystemMetrics(1)
-
-        if screen_width <= 0 or screen_height <= 0:
+        try:
+            virtual_left, virtual_top, virtual_width, virtual_height = (
+                _virtual_screen_bounds(
+                    user32
+                )
+            )
+        except OSError as error:
             return ToolResult(
                 success=False,
-                error=(
-                    "Impossibile determinare la risoluzione "
-                    "dello schermo."
-                ),
+                error=str(error),
             )
 
-        if x >= screen_width or y >= screen_height:
+        right = (
+            virtual_left
+            + virtual_width
+        )
+        bottom = (
+            virtual_top
+            + virtual_height
+        )
+
+        if (
+            x < virtual_left
+            or x >= right
+            or y < virtual_top
+            or y >= bottom
+        ):
             return ToolResult(
                 success=False,
                 error=(
-                    f"Coordinate fuori dallo schermo: "
-                    f"({x}, {y}). Risoluzione: "
-                    f"{screen_width}x{screen_height}."
+                    f"Coordinate fuori dal desktop virtuale: "
+                    f"({x}, {y}). Area: "
+                    f"x={virtual_left}..{right - 1}, "
+                    f"y={virtual_top}..{bottom - 1}."
                 ),
             )
 
@@ -200,8 +256,12 @@ class ClickMouseTool(Tool):
             output={
                 "x": x,
                 "y": y,
-                "screen_width": screen_width,
-                "screen_height": screen_height,
+                "virtual_screen": {
+                    "left": virtual_left,
+                    "top": virtual_top,
+                    "width": virtual_width,
+                    "height": virtual_height,
+                },
                 "button": "left",
             },
         )
@@ -278,14 +338,6 @@ class MoveMouseTool(Tool):
                 error="La coordinata 'y' deve essere un intero.",
             )
 
-        if x < 0 or y < 0:
-            return ToolResult(
-                success=False,
-                error=(
-                    "Le coordinate del mouse non possono essere negative."
-                ),
-            )
-
         if not hasattr(ctypes, "windll"):
             return ToolResult(
                 success=False,
@@ -304,25 +356,37 @@ class MoveMouseTool(Tool):
             ]
             get_metrics.restype = ctypes.c_int
 
-            screen_width = get_metrics(0)
-            screen_height = get_metrics(1)
+            (
+                virtual_left,
+                virtual_top,
+                virtual_width,
+                virtual_height,
+            ) = _virtual_screen_bounds(
+                user32
+            )
 
-            if screen_width <= 0 or screen_height <= 0:
+            right = (
+                virtual_left
+                + virtual_width
+            )
+            bottom = (
+                virtual_top
+                + virtual_height
+            )
+
+            if (
+                x < virtual_left
+                or x >= right
+                or y < virtual_top
+                or y >= bottom
+            ):
                 return ToolResult(
                     success=False,
                     error=(
-                        "Impossibile determinare la risoluzione "
-                        "dello schermo."
-                    ),
-                )
-
-            if x >= screen_width or y >= screen_height:
-                return ToolResult(
-                    success=False,
-                    error=(
-                        f"Coordinate fuori dallo schermo: "
-                        f"({x}, {y}). Risoluzione: "
-                        f"{screen_width}x{screen_height}."
+                        f"Coordinate fuori dal desktop virtuale: "
+                        f"({x}, {y}). Area: "
+                        f"x={virtual_left}..{right - 1}, "
+                        f"y={virtual_top}..{bottom - 1}."
                     ),
                 )
 
@@ -388,8 +452,12 @@ class MoveMouseTool(Tool):
                     "x": x,
                     "y": y,
                     "verified": True,
-                    "screen_width": screen_width,
-                    "screen_height": screen_height,
+                    "virtual_screen": {
+                        "left": virtual_left,
+                        "top": virtual_top,
+                        "width": virtual_width,
+                        "height": virtual_height,
+                    },
                 },
             )
 
