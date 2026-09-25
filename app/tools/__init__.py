@@ -20,6 +20,9 @@ from app.tools.pc_mouse import (
 from app.tools.pc_window_discovery import (
     ListWindowsTool,
 )
+from app.tools.pc_ui import (
+    ListUIElementsTool,
+)
 from app.tools.pc_system import (
     DiscoverApplicationsTool,
     DiscoverCommandsTool,
@@ -62,5 +65,6 @@ __all__ = [
     "ClickMouseTool",
     "MoveMouseTool",
     "ListWindowsTool",
+    "ListUIElementsTool",
 ]
 
