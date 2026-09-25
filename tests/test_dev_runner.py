@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from dev import snapshot_python_files
+import dev
+
+
+from dev import compile_python_sources, snapshot_python_files
 
 
 def test_snapshot_python_files_detects_source_files(tmp_path: Path) -> None:
@@ -40,3 +43,55 @@ def test_snapshot_changes_when_python_file_changes(tmp_path: Path) -> None:
     after = snapshot_python_files(tmp_path)
 
     assert before != after
+
+
+def test_compile_python_sources_accepts_valid_source(tmp_path: Path) -> None:
+    app = tmp_path / "app"
+    app.mkdir()
+
+    (app / "main.py").write_text(
+        "value = 42\n",
+        encoding="utf-8",
+    )
+
+    assert compile_python_sources(tmp_path) is True
+
+
+def test_compile_python_sources_rejects_invalid_source(
+    tmp_path: Path,
+) -> None:
+    app = tmp_path / "app"
+    app.mkdir()
+
+    (app / "main.py").write_text(
+        "def broken(:\n",
+        encoding="utf-8",
+    )
+
+    assert compile_python_sources(tmp_path) is False
+
+
+def test_write_dev_log_does_not_write_to_console(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    log_path = tmp_path / "dev.log"
+
+    monkeypatch.setattr(
+        dev,
+        "DEV_LOG",
+        log_path,
+    )
+
+    dev.write_dev_log(
+        "test message",
+    )
+
+    captured = capsys.readouterr()
+
+    assert captured.out == ""
+    assert captured.err == ""
+    assert "test message" in log_path.read_text(
+        encoding="utf-8",
+    )
