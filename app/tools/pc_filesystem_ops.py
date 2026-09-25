@@ -462,6 +462,15 @@ class MovePathTool(Tool):
                     ),
                 )
 
+            if resolved_source == resolved_destination:
+                return ToolResult(
+                    success=False,
+                    error=(
+                        "La destinazione dello spostamento coincide con "
+                        "la sorgente: l'operazione sarebbe un no-op."
+                    ),
+                )
+
             target = resolved_destination
 
             if (
