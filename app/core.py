@@ -247,7 +247,7 @@ class IRISCore:
                 )
             )
 
-        return "\\n".join(lines)
+        return "\n".join(lines)
 
     @staticmethod
     def _build_runtime_agent_context() -> str:
