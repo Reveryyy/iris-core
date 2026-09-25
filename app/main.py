@@ -70,12 +70,18 @@ from app.tools.pc_system import (
 from app.tools.pc_gui import TypeTextTool
 from app.tools.pc_keyboard import PressKeyTool
 from app.tools.pc_minimize import MinimizeWindowTool
-from app.tools.pc_mouse import ClickMouseTool
+from app.tools.pc_mouse import (
+    ClickMouseTool,
+    MoveMouseTool,
+)
 from app.tools.pc_screenshot import ScreenshotTool
 from app.tools.pc_scroll import ScrollMouseTool
 from app.tools.pc_state import GetForegroundWindowTool
 from app.tools.pc_wait import WaitTool
 from app.tools.pc_window import FocusWindowTool
+from app.tools.pc_window_discovery import (
+    ListWindowsTool,
+)
 from app.tools.permissions import (
     Permission,
     PermissionManager,
@@ -298,6 +304,10 @@ def main() -> None:
     # =========================================================================
 
     tool_registry.register(
+        ListWindowsTool()
+    )
+
+    tool_registry.register(
         FocusWindowTool()
     )
 
@@ -325,6 +335,10 @@ def main() -> None:
 
     tool_registry.register(
         TypeTextTool()
+    )
+
+    tool_registry.register(
+        MoveMouseTool()
     )
 
     tool_registry.register(
