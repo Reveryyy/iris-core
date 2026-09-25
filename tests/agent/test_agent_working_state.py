@@ -595,7 +595,7 @@ def test_move_request_discovers_described_file_after_session_restart() -> None:
     assert router.calls == 0
     assert len(plan.steps) == 1
     assert plan.steps[0].tool_name == "search_files"
-    assert plan.steps[0].arguments["query"] == "*test*"
+    assert plan.steps[0].arguments["query"] == "*test*file*"
     assert plan.steps[0].arguments["location"] == root
 
 
