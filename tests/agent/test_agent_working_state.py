@@ -772,6 +772,94 @@ def test_move_replan_resolves_search_observation() -> None:
     assert PureWindowsPath(plan.steps[1].arguments["destination"]).parent != PureWindowsPath(source).parent
 
 
+
+def test_move_replan_prefers_untracked_candidate_for_vague_file_reference() -> None:
+    planner = AgentPlanner(MoveRouter())
+
+    tracked = r"C:\test\tests\test_file_fixture.txt"
+    source = r"C:\test\test_file4598589343584980934093540934.txt"
+    root = r"C:\test"
+
+    observation = AgentObservation(
+        step_index=1,
+        tool_name="search_files",
+        arguments={"query": "*test*file*", "location": root},
+        success=True,
+        output={
+            "results": [
+                {
+                    "path": tracked,
+                    "name": "test_file_fixture.txt",
+                    "is_file": True,
+                    "is_git_tracked": True,
+                    "created_at": "2026-09-25T19:00:00+00:00",
+                    "modified_at": "2026-09-25T19:30:00+00:00",
+                },
+                {
+                    "path": source,
+                    "name": "test_file4598589343584980934093540934.txt",
+                    "is_file": True,
+                    "is_git_tracked": False,
+                    "created_at": "2026-09-24T10:00:00+00:00",
+                    "modified_at": "2026-09-25T19:00:00+00:00",
+                },
+            ]
+        },
+        verified=True,
+    )
+
+    plan = planner.plan(
+        goal="Sposta il file di test in un altra posizione",
+        context=(
+            "AMBIENTE REALE DEL PROCESSO:\n"
+            f"- RADICE DEL PROGETTO: {root}\n"
+        ),
+        tool_definitions=[
+            {
+                "name": "search_files",
+                "description": "Cerca file.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "location": {"type": "string"},
+                    },
+                    "required": ["query", "location"],
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "name": "create_directory",
+                "description": "Crea una directory.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "name": "move_path",
+                "description": "Sposta un file.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "source": {"type": "string"},
+                        "destination": {"type": "string"},
+                    },
+                    "required": ["source", "destination"],
+                    "additionalProperties": False,
+                },
+            },
+        ],
+        observations=[observation],
+    )
+
+    assert plan.steps[0].tool_name == "create_directory"
+    assert plan.steps[1].tool_name == "move_path"
+    assert plan.steps[1].arguments["source"] == source
+
+
 def test_move_request_never_degrades_to_copy() -> None:
     router = MoveRouter()
     planner = AgentPlanner(router)
