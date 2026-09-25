@@ -13,6 +13,13 @@ from app.tools.pc_filesystem import (
     ListDirectoryTool,
     SearchFilesTool,
 )
+from app.tools.pc_mouse import (
+    ClickMouseTool,
+    MoveMouseTool,
+)
+from app.tools.pc_window_discovery import (
+    ListWindowsTool,
+)
 from app.tools.pc_system import (
     DiscoverApplicationsTool,
     DiscoverCommandsTool,
@@ -52,5 +59,8 @@ __all__ = [
     "DiscoverCommandsTool",
     "DiscoverSystemInfoTool",
     "ListProcessesTool",
+    "ClickMouseTool",
+    "MoveMouseTool",
+    "ListWindowsTool",
 ]
 
