@@ -292,7 +292,7 @@ class IRISCore:
                     f"- RADICE GIT DEL PROGETTO: {git_root}"
                 )
 
-        return "\\n".join(lines)
+        return "\n".join(lines)
 
     def _remember_agent_result(
         self,
