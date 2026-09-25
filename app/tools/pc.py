@@ -1280,7 +1280,7 @@ class WriteFileTool(Tool):
         allowed_roots: list[str | Path] | None = None,
         max_bytes: int | None = None,
     ) -> None:
-        if max_bytes <= 0:
+        if max_bytes is not None and max_bytes <= 0:
             raise ValueError(
                 "max_bytes deve essere maggiore di zero."
             )
