@@ -696,7 +696,10 @@ class AgentPlanner:
             )
         }
 
-        if "press_key" not in tool_names:
+        if (
+            "press_key" not in tool_names
+            and "type_text" not in tool_names
+        ):
             return None
 
         normalized = (
@@ -715,6 +718,39 @@ class AgentPlanner:
             " ",
             normalized,
         ).strip()
+
+        if "type_text" in tool_names:
+            text_value = (
+                self._extract_text_input(
+                    goal
+                )
+            )
+
+            if text_value is not None:
+                return AgentPlan(
+                    goal=goal,
+                    steps=(
+                        AgentPlanStep(
+                            tool_name="type_text",
+                            arguments={
+                                "text": text_value,
+                            },
+                            description=(
+                                "Inserisci il testo richiesto "
+                                "nella finestra attiva."
+                            ),
+                            success_criteria=(
+                                "Il testo richiesto è stato "
+                                "inserito nella finestra attiva."
+                            ),
+                        ),
+                    ),
+                    decision=AgentDecision.DONE,
+                    message=None,
+                )
+
+        if "press_key" not in tool_names:
+            return None
 
         if normalized in {
             "seleziona tutto",
@@ -789,6 +825,62 @@ class AgentPlanner:
             )
 
         return None
+
+    @staticmethod
+    def _extract_text_input(
+        goal: str,
+    ) -> str | None:
+        normalized = goal.strip()
+
+        if not normalized:
+            return None
+
+        normalized = re.sub(
+            r"^\s*/agent\s+",
+            "",
+            normalized,
+            flags=re.IGNORECASE,
+        ).strip()
+
+        match = re.match(
+            r"^(?:scrivi|digita|inserisci)\s+"
+            r"(.+?)\s*$",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+
+        if match is None:
+            return None
+
+        text = match.group(
+            1
+        ).strip()
+
+        if not text:
+            return None
+
+        quote_pairs = (
+            ('"', '"'),
+            ("'", "'"),
+            ("“", "”"),
+            ("‘", "’"),
+        )
+
+        for opening, closing in quote_pairs:
+            if (
+                len(text) >= 2
+                and text.startswith(opening)
+                and text.endswith(closing)
+            ):
+                text = text[
+                    1:-1
+                ].strip()
+                break
+
+        if not text:
+            return None
+
+        return text
 
     # ========================================================================
     # SCHEMA
@@ -1216,6 +1308,7 @@ class AgentPlanner:
 
         if not normalized:
             return False
+
         markers = (
             " e ",
             " poi ",

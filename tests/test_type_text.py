@@ -4,6 +4,8 @@ import ctypes
 from types import SimpleNamespace
 
 from app.tools.pc_gui import (
+    INPUT,
+    INPUT_KEYBOARD,
     KEYEVENTF_KEYUP,
     KEYEVENTF_UNICODE,
     TypeTextTool,
@@ -36,39 +38,72 @@ class FakeUser32:
     ) -> None:
         self.foreground_window = foreground_window
 
-        self.key_events: list[
-            tuple[int, int, int, int]
+        self.input_events: list[
+            tuple[int, int, int]
         ] = []
+
+        self.send_input_calls: list[
+            tuple[int, int]
+        ] = []
+
+        self.send_input_result: int | None = None
 
         self.GetForegroundWindow = FakeFunction(
             self._get_foreground_window
         )
 
-        self.keybd_event = FakeFunction(
-            self._keybd_event
+        self.SendInput = FakeFunction(
+            self._send_input
         )
 
-    def _get_foreground_window(self) -> int:
+    def _get_foreground_window(
+        self,
+    ) -> int:
         if self.foreground_window is None:
             return 0
 
         return self.foreground_window
 
-    def _keybd_event(
+    def _send_input(
         self,
-        virtual_key,
-        scan_code,
-        flags,
-        extra_info,
-    ) -> None:
-        self.key_events.append(
+        count,
+        inputs,
+        size,
+    ) -> int:
+        count = int(count)
+        size = int(size)
+
+        self.send_input_calls.append(
             (
-                int(virtual_key),
-                int(scan_code),
-                int(flags),
-                int(extra_info),
+                count,
+                size,
             )
         )
+
+        input_pointer = ctypes.cast(
+            inputs,
+            ctypes.POINTER(INPUT),
+        )
+
+        for index in range(
+            count
+        ):
+            current = input_pointer[
+                index
+            ]
+
+            self.input_events.append(
+                (
+                    int(current.type),
+                    int(current.ki.wScan),
+                    int(current.ki.dwFlags),
+                )
+            )
+
+        if self.send_input_result is not None:
+            return self.send_input_result
+
+        return count
 
 
 def install_fake_windows(
@@ -284,7 +319,9 @@ def test_type_text_reports_missing_foreground_window(
         result.error.lower()
     )
 
-    assert user32.key_events == []
+    assert user32.input_events == []
+
+    assert user32.send_input_calls == []
 
 
 # ============================================================================
@@ -292,7 +329,7 @@ def test_type_text_reports_missing_foreground_window(
 # ============================================================================
 
 
-def test_type_text_sends_unicode_key_events(
+def test_type_text_sends_unicode_input_events(
     monkeypatch,
 ):
     tool = TypeTextTool(
@@ -325,42 +362,39 @@ def test_type_text_sends_unicode_key_events(
         "characters"
     ] == 3
 
-    assert user32.key_events == [
+    assert user32.input_events == [
         (
-            0,
+            INPUT_KEYBOARD,
             ord("a"),
             KEYEVENTF_UNICODE,
-            0,
         ),
         (
-            0,
+            INPUT_KEYBOARD,
             ord("a"),
-            KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
-            0,
+            KEYEVENTF_UNICODE
+            | KEYEVENTF_KEYUP,
         ),
         (
-            0,
+            INPUT_KEYBOARD,
             ord("b"),
             KEYEVENTF_UNICODE,
-            0,
         ),
         (
-            0,
+            INPUT_KEYBOARD,
             ord("b"),
-            KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
-            0,
+            KEYEVENTF_UNICODE
+            | KEYEVENTF_KEYUP,
         ),
         (
-            0,
+            INPUT_KEYBOARD,
             ord("c"),
             KEYEVENTF_UNICODE,
-            0,
         ),
         (
-            0,
+            INPUT_KEYBOARD,
             ord("c"),
-            KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
-            0,
+            KEYEVENTF_UNICODE
+            | KEYEVENTF_KEYUP,
         ),
     ]
 
@@ -394,22 +428,21 @@ def test_type_text_supports_spaces_and_newlines(
 
     newline_events = [
         event
-        for event in user32.key_events
+        for event in user32.input_events
         if event[1] == ord("\n")
     ]
 
     assert newline_events == [
         (
-            0,
+            INPUT_KEYBOARD,
             ord("\n"),
             KEYEVENTF_UNICODE,
-            0,
         ),
         (
-            0,
+            INPUT_KEYBOARD,
             ord("\n"),
-            KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
-            0,
+            KEYEVENTF_UNICODE
+            | KEYEVENTF_KEYUP,
         ),
     ]
 
@@ -454,7 +487,7 @@ def test_type_text_supports_unicode_characters(
 
     actual_scan_codes = [
         event[1]
-        for event in user32.key_events
+        for event in user32.input_events
         if not (
             event[2]
             & KEYEVENTF_KEYUP
@@ -464,6 +497,40 @@ def test_type_text_supports_unicode_characters(
     assert actual_scan_codes == (
         expected_code_units
     )
+
+
+def test_type_text_supports_euro_symbol(
+    monkeypatch,
+):
+    tool = TypeTextTool(
+        interval_seconds=0,
+    )
+
+    user32 = FakeUser32()
+
+    install_fake_windows(
+        monkeypatch,
+        user32,
+    )
+
+    result = tool.execute(
+        {
+            "text": "€",
+        }
+    )
+
+    assert result.success is True
+
+    assert [
+        event[1]
+        for event in user32.input_events
+        if not (
+            event[2]
+            & KEYEVENTF_KEYUP
+        )
+    ] == [
+        0x20AC,
+    ]
 
 
 def test_type_text_supports_emoji_surrogate_pair(
@@ -511,7 +578,7 @@ def test_type_text_supports_emoji_surrogate_pair(
 
     actual_code_units = [
         event[1]
-        for event in user32.key_events
+        for event in user32.input_events
         if not (
             event[2]
             & KEYEVENTF_KEYUP
@@ -522,13 +589,146 @@ def test_type_text_supports_emoji_surrogate_pair(
         expected_code_units
     )
 
+    assert actual_code_units == [
+        0x0041,
+        0xD83D,
+        0xDE00,
+        0x0042,
+    ]
+
+
+def test_type_text_supports_mixed_unicode(
+    monkeypatch,
+):
+    tool = TypeTextTool(
+        interval_seconds=0,
+    )
+
+    user32 = FakeUser32()
+
+    install_fake_windows(
+        monkeypatch,
+        user32,
+    )
+
+    result = tool.execute(
+        {
+            "text": "àèéìòù € 😀",
+        }
+    )
+
+    assert result.success is True
+    assert result.output is not None
+
+    encoded = "àèéìòù € 😀".encode(
+        "utf-16-le"
+    )
+
+    expected_code_units = [
+        int.from_bytes(
+            encoded[index:index + 2],
+            byteorder="little",
+        )
+        for index in range(
+            0,
+            len(encoded),
+            2,
+        )
+    ]
+
+    actual_code_units = [
+        event[1]
+        for event in user32.input_events
+        if not (
+            event[2]
+            & KEYEVENTF_KEYUP
+        )
+    ]
+
+    assert actual_code_units == (
+        expected_code_units
+    )
+
+    assert result.output[
+        "characters"
+    ] == len(
+        expected_code_units
+    )
+
+
+# ============================================================================
+# SENDINPUT
+# ============================================================================
+
+
+def test_type_text_reports_send_input_partial_failure(
+    monkeypatch,
+):
+    tool = TypeTextTool(
+        interval_seconds=0,
+    )
+
+    user32 = FakeUser32()
+
+    user32.send_input_result = 1
+
+    install_fake_windows(
+        monkeypatch,
+        user32,
+    )
+
+    result = tool.execute(
+        {
+            "text": "a",
+        }
+    )
+
+    assert result.success is False
+    assert result.error is not None
+
+    assert "sendinput" in (
+        result.error.lower()
+    )
+
+    assert "1/2" in result.error
+
+
+def test_type_text_records_send_input_size(
+    monkeypatch,
+):
+    tool = TypeTextTool(
+        interval_seconds=0,
+    )
+
+    user32 = FakeUser32()
+
+    install_fake_windows(
+        monkeypatch,
+        user32,
+    )
+
+    result = tool.execute(
+        {
+            "text": "a",
+        }
+    )
+
+    assert result.success is True
+
+    assert user32.send_input_calls == [
+        (
+            2,
+            ctypes.sizeof(INPUT),
+        )
+    ]
+
 
 # ============================================================================
 # INTERVAL
 # ============================================================================
 
 
-def test_type_text_applies_interval_between_characters(
+def test_type_text_applies_interval_between_code_units(
     monkeypatch,
 ):
     tool = TypeTextTool(
@@ -605,7 +805,7 @@ def test_type_text_does_not_sleep_when_interval_is_zero(
 # ============================================================================
 
 
-def test_type_text_handles_keybd_event_error(
+def test_type_text_handles_send_input_failure(
     monkeypatch,
 ):
     tool = TypeTextTool(
@@ -614,18 +814,17 @@ def test_type_text_handles_keybd_event_error(
 
     user32 = FakeUser32()
 
-    def fail_keybd_event(
-        virtual_key,
-        scan_code,
-        flags,
-        extra_info,
-    ) -> None:
+    def fail_send_input(
+        count,
+        inputs,
+        size,
+    ) -> int:
         raise OSError(
-            "Errore tastiera simulato"
+            "Errore SendInput simulato"
         )
 
-    user32.keybd_event = FakeFunction(
-        fail_keybd_event
+    user32.SendInput = FakeFunction(
+        fail_send_input
     )
 
     install_fake_windows(
@@ -643,5 +842,9 @@ def test_type_text_handles_keybd_event_error(
     assert result.error is not None
 
     assert "impossibile inviare il testo" in (
+        result.error.lower()
+    )
+
+    assert "errore sendinput simulato" in (
         result.error.lower()
     )

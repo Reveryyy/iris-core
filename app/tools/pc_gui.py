@@ -13,11 +13,121 @@ from app.tools.result import ToolResult
 KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_UNICODE = 0x0004
 
+INPUT_KEYBOARD = 1
+
+
+ULONG_PTR = ctypes.c_size_t
+
+
+class KEYBDINPUT(ctypes.Structure):
+    _fields_ = [
+        (
+            "wVk",
+            wintypes.WORD,
+        ),
+        (
+            "wScan",
+            wintypes.WORD,
+        ),
+        (
+            "dwFlags",
+            wintypes.DWORD,
+        ),
+        (
+            "time",
+            wintypes.DWORD,
+        ),
+        (
+            "dwExtraInfo",
+            ULONG_PTR,
+        ),
+    ]
+
+
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        (
+            "dx",
+            wintypes.LONG,
+        ),
+        (
+            "dy",
+            wintypes.LONG,
+        ),
+        (
+            "mouseData",
+            wintypes.DWORD,
+        ),
+        (
+            "dwFlags",
+            wintypes.DWORD,
+        ),
+        (
+            "time",
+            wintypes.DWORD,
+        ),
+        (
+            "dwExtraInfo",
+            ULONG_PTR,
+        ),
+    ]
+
+
+class HARDWAREINPUT(ctypes.Structure):
+    _fields_ = [
+        (
+            "uMsg",
+            wintypes.DWORD,
+        ),
+        (
+            "wParamL",
+            wintypes.WORD,
+        ),
+        (
+            "wParamH",
+            wintypes.WORD,
+        ),
+    ]
+
+
+class INPUT_UNION(ctypes.Union):
+    _fields_ = [
+        (
+            "ki",
+            KEYBDINPUT,
+        ),
+        (
+            "mi",
+            MOUSEINPUT,
+        ),
+        (
+            "hi",
+            HARDWAREINPUT,
+        ),
+    ]
+
+
+class INPUT(ctypes.Structure):
+    _anonymous_ = (
+        "u",
+    )
+
+    _fields_ = [
+        (
+            "type",
+            wintypes.DWORD,
+        ),
+        (
+            "u",
+            INPUT_UNION,
+        ),
+    ]
+
 
 class TypeTextTool(Tool):
     """
     Inserisce testo Unicode nella finestra attualmente in primo piano
-    utilizzando keybd_event di Windows.
+    utilizzando SendInput di Windows.
     """
 
     def __init__(
@@ -110,20 +220,45 @@ class TypeTextTool(Tool):
 
         user32 = ctypes.windll.user32
 
-        get_foreground_window = user32.GetForegroundWindow
-        get_foreground_window.argtypes = []
-        get_foreground_window.restype = wintypes.HWND
+        get_foreground_window = (
+            user32.GetForegroundWindow
+        )
 
-        keybd_event = user32.keybd_event
-        keybd_event.argtypes = [
-            wintypes.BYTE,
-            wintypes.BYTE,
-            wintypes.DWORD,
-            ctypes.c_ulong,
-        ]
-        keybd_event.restype = None
+        if hasattr(
+            get_foreground_window,
+            "argtypes",
+        ):
+            get_foreground_window.argtypes = []
 
-        foreground_window = get_foreground_window()
+        if hasattr(
+            get_foreground_window,
+            "restype",
+        ):
+            get_foreground_window.restype = (
+                wintypes.HWND
+            )
+
+        send_input = user32.SendInput
+
+        if hasattr(
+            send_input,
+            "argtypes",
+        ):
+            send_input.argtypes = [
+                wintypes.UINT,
+                ctypes.POINTER(INPUT),
+                ctypes.c_int,
+            ]
+
+        if hasattr(
+            send_input,
+            "restype",
+        ):
+            send_input.restype = wintypes.UINT
+
+        foreground_window = (
+            get_foreground_window()
+        )
 
         if not foreground_window:
             return ToolResult(
@@ -153,19 +288,67 @@ class TypeTextTool(Tool):
                     byteorder="little",
                 )
 
-                keybd_event(
-                    0,
-                    code_unit,
-                    KEYEVENTF_UNICODE,
-                    0,
+                key_down = INPUT(
+                    type=INPUT_KEYBOARD,
+                    ki=KEYBDINPUT(
+                        wVk=0,
+                        wScan=code_unit,
+                        dwFlags=KEYEVENTF_UNICODE,
+                        time=0,
+                        dwExtraInfo=0,
+                    ),
                 )
 
-                keybd_event(
-                    0,
-                    code_unit,
-                    KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
-                    0,
+                key_up = INPUT(
+                    type=INPUT_KEYBOARD,
+                    ki=KEYBDINPUT(
+                        wVk=0,
+                        wScan=code_unit,
+                        dwFlags=(
+                            KEYEVENTF_UNICODE
+                            | KEYEVENTF_KEYUP
+                        ),
+                        time=0,
+                        dwExtraInfo=0,
+                    ),
                 )
+
+                inputs = (
+                    INPUT * 2
+                )(
+                    key_down,
+                    key_up,
+                )
+
+                sent = send_input(
+                    2,
+                    inputs,
+                    ctypes.sizeof(INPUT),
+                )
+
+                if int(sent) != 2:
+                    error_code = ctypes.get_last_error()
+
+                    if error_code:
+                        return ToolResult(
+                            success=False,
+                            error=(
+                                "Impossibile inviare il testo: "
+                                f"SendInput ha restituito "
+                                f"{sent}/2 eventi "
+                                f"(errore Windows "
+                                f"{error_code})."
+                            ),
+                        )
+
+                    return ToolResult(
+                        success=False,
+                        error=(
+                            "Impossibile inviare il testo: "
+                            f"SendInput ha restituito "
+                            f"{sent}/2 eventi."
+                        ),
+                    )
 
                 sent_characters += 1
 
@@ -194,5 +377,13 @@ class TypeTextTool(Tool):
 
 
 __all__ = [
+    "KEYEVENTF_KEYUP",
+    "KEYEVENTF_UNICODE",
+    "INPUT_KEYBOARD",
+    "KEYBDINPUT",
+    "MOUSEINPUT",
+    "HARDWAREINPUT",
+    "INPUT_UNION",
+    "INPUT",
     "TypeTextTool",
 ]
