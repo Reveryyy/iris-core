@@ -232,3 +232,141 @@ def test_plan_prefers_verified_directory_over_llm_file_path() -> None:
         r"C:\Users\picco\IRIS\iris-core\test"
     )
     assert plan.steps[0].arguments["content"] == "Testo creato da IRIS."
+
+
+class CopyRouter:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def generate(self, *args, **kwargs):
+        self.calls += 1
+        return json.dumps(
+            {
+                "goal": "copia quel file in un'altra posizione",
+                "decision": "ask_user",
+                "message": "Specifica la destinazione.",
+                "steps": [
+                    {
+                        "tool_name": "copy_path",
+                        "arguments": {
+                            "source": r"C:\Users\picco\IRIS\iris-core\test\file.txt",
+                            "destination": "",
+                        },
+                        "description": "Copia il file.",
+                        "success_criteria": "Il file è copiato.",
+                    }
+                ],
+            }
+        )
+
+
+def test_generic_copy_uses_recent_file_and_project_root() -> None:
+    router = CopyRouter()
+    planner = AgentPlanner(router)
+
+    source = r"C:\Users\picco\IRIS\iris-core\test\file.txt"
+    root = r"C:\Users\picco\IRIS\iris-core"
+
+    context = "\n".join(
+        [
+            "STATO OPERATIVO RECENTE:",
+            json.dumps(
+                {
+                    "tool_name": "read_file",
+                    "arguments": {"path": source},
+                    "output": {
+                        "path": source,
+                        "content": "Testo creato da IRIS.",
+                    },
+                }
+            ),
+            "AMBIENTE REALE DEL PROCESSO:",
+            f"- RADICE GIT DEL PROGETTO: {root}",
+        ]
+    )
+
+    plan = planner.plan(
+        goal="copia quel file in un'altra posizione",
+        context=context,
+        tool_definitions=[
+            {
+                "name": "copy_path",
+                "description": "Copia un file.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "source": {"type": "string"},
+                        "destination": {"type": "string"},
+                    },
+                    "required": ["source", "destination"],
+                    "additionalProperties": False,
+                },
+            }
+        ],
+    )
+
+    assert router.calls == 0
+    assert plan.steps[0].tool_name == "copy_path"
+    assert plan.steps[0].arguments["source"] == source
+    destination = plan.steps[0].arguments["destination"]
+    assert destination.startswith(root + "\")
+    assert destination != source
+    assert PureWindowsPath(destination).suffix == ".txt"
+
+
+def test_generic_copy_creates_secondary_directory_when_project_root_is_source_parent() -> None:
+    planner = AgentPlanner(CopyRouter())
+
+    source = r"C:\Users\picco\IRIS\iris-core\file.txt"
+    root = r"C:\Users\picco\IRIS\iris-core"
+
+    context = "\n".join(
+        [
+            "STATO OPERATIVO RECENTE:",
+            json.dumps(
+                {
+                    "tool_name": "read_file",
+                    "arguments": {"path": source},
+                    "output": {"path": source},
+                }
+            ),
+            "AMBIENTE REALE DEL PROCESSO:",
+            f"- RADICE GIT DEL PROGETTO: {root}",
+        ]
+    )
+
+    plan = planner.plan(
+        goal="copia quel file in un'altra posizione",
+        context=context,
+        tool_definitions=[
+            {
+                "name": "copy_path",
+                "description": "Copia un file.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "source": {"type": "string"},
+                        "destination": {"type": "string"},
+                    },
+                    "required": ["source", "destination"],
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "name": "create_directory",
+                "description": "Crea una directory.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                    },
+                    "required": ["path"],
+                    "additionalProperties": False,
+                },
+            },
+        ],
+    )
+
+    assert plan.steps[0].tool_name == "create_directory"
+    assert plan.steps[1].tool_name == "copy_path"
+    assert plan.steps[1].arguments["source"] == source
