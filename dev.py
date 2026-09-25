@@ -4,16 +4,20 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+
+
 ROOT = Path(__file__).resolve().parent
+
+
 def snapshot_python_files(
     root: Path = ROOT,
 ) -> dict[Path, tuple[int, int]]:
     """
-    Restituisce uno snapshot compatto dei sorgenti Python di IRIS.
+    Restituisce uno snapshot dei sorgenti Python di IRIS.
 
-    Vengono esclusi automaticamente __pycache__ e le directory nascoste
-    generate dal runtime. L'ordine è deterministico così lo snapshot può
-    essere confrontato direttamente.
+    Vengono osservati i file dentro app/ e ignorate le directory
+    __pycache__. Lo snapshot può essere confrontato direttamente per
+    rilevare modifiche, aggiunte e rimozioni.
     """
     snapshot: dict[Path, tuple[int, int]] = {}
 
@@ -25,22 +29,19 @@ def snapshot_python_files(
     except OSError:
         return snapshot
 
-    directory = watch_directory
-        for path in directory.rglob("*.py"):
-            parts = path.parts
+    for path in watch_directory.rglob("*.py"):
+        if "__pycache__" in path.parts:
+            continue
 
-            if "__pycache__" in parts:
-                continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
 
-            try:
-                stat = path.stat()
-            except OSError:
-                continue
-
-            snapshot[path] = (
-                stat.st_mtime_ns,
-                stat.st_size,
-            )
+        snapshot[path] = (
+            stat.st_mtime_ns,
+            stat.st_size,
+        )
 
     return dict(
         sorted(
@@ -51,7 +52,7 @@ def snapshot_python_files(
 
 
 def start_iris() -> subprocess.Popen:
-    """Avvia IRIS come processo figlio con lo stesso interprete Python."""
+    """Avvia IRIS come processo figlio usando lo stesso interprete Python."""
     return subprocess.Popen(
         [
             sys.executable,
@@ -65,14 +66,16 @@ def start_iris() -> subprocess.Popen:
 def stop_iris(
     process: subprocess.Popen,
 ) -> None:
-    """Termina IRIS e, se necessario, forza la chiusura."""
+    """Termina IRIS e forza la chiusura se non risponde entro il timeout."""
     if process.poll() is not None:
         return
 
     process.terminate()
 
     try:
-        process.wait(timeout=5.0)
+        process.wait(
+            timeout=5.0,
+        )
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait()
@@ -80,19 +83,17 @@ def stop_iris(
 
 def main() -> None:
     """
-    Supervisore di sviluppo.
+    Supervisore di sviluppo di IRIS.
 
     Avvio:
         py dev.py
 
-    Da quel momento:
-    - IRIS parte normalmente;
-    - ogni modifica a un .py dentro app/ viene rilevata;
-    - IRIS viene riavviato automaticamente;
-    - non serve chiudere e rilanciare manualmente il terminale.
+    Da quel momento IRIS viene avviato automaticamente e ogni modifica
+    ai file Python dentro app/ provoca un riavvio automatico del processo.
 
-    La memoria persistente resta nel database; lo stato puramente in-memory
-    della sessione, invece, viene ricreato a ogni reload.
+    La memoria persistente nel database non viene persa. Lo stato
+    esclusivamente in-memory della sessione viene invece ricreato dopo
+    ogni reload.
     """
     previous_snapshot = snapshot_python_files()
     process = start_iris()
@@ -102,12 +103,14 @@ def main() -> None:
     )
     print(
         "[DEV] Modifica un file in app/ per applicare automaticamente "
-        "le modifiche senza riavviare manualmente IRIS."
+        "le nuove modifiche."
     )
 
     try:
         while True:
-            time.sleep(0.5)
+            time.sleep(
+                0.5
+            )
 
             current_snapshot = snapshot_python_files()
 
@@ -117,13 +120,17 @@ def main() -> None:
                     "riavvio automatico di IRIS..."
                 )
 
-                stop_iris(process)
+                stop_iris(
+                    process
+                )
+
                 process = start_iris()
                 previous_snapshot = current_snapshot
 
                 print(
                     "[DEV] IRIS riavviato."
                 )
+
                 continue
 
             return_code = process.poll()
@@ -145,7 +152,9 @@ def main() -> None:
             "\n[DEV] Arresto del supervisore..."
         )
 
-        stop_iris(process)
+        stop_iris(
+            process
+        )
 
 
 if __name__ == "__main__":
