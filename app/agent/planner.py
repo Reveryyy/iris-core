@@ -813,19 +813,25 @@ class AgentPlanner:
 
         source_path = Path(source).resolve(strict=False)
         root_path = Path(destination_root).resolve(strict=False)
-
-        destination = root_path / (
-            f"{source_path.stem}-moved-{uuid4().hex[:8]}{source_path.suffix}"
-        )
-
-        if destination == source_path:
-            destination = root_path / (
-                f"{source_path.stem}-moved-{uuid4().hex[:8]}{source_path.suffix}"
-            )
+        destination_parent = root_path / f"iris-move-{uuid4().hex[:8]}"
+        destination = destination_parent / source_path.name
 
         return AgentPlan(
             goal=goal,
             steps=(
+                AgentPlanStep(
+                    tool_name="create_directory",
+                    arguments={
+                        "path": str(destination_parent),
+                    },
+                    description=(
+                        "Crea una nuova directory di destinazione separata dalla "
+                        "posizione corrente del file."
+                    ),
+                    success_criteria=(
+                        "La nuova directory di destinazione esiste."
+                    ),
+                ),
                 AgentPlanStep(
                     tool_name="move_path",
                     arguments={
@@ -833,10 +839,11 @@ class AgentPlanner:
                         "destination": str(destination),
                     },
                     description=(
-                        "Sposta il file già identificato in una nuova posizione."
+                        "Sposta il file già identificato nella nuova directory."
                     ),
                     success_criteria=(
-                        "La destinazione esiste e il percorso sorgente non esiste più."
+                        "La destinazione esiste nella nuova directory e il percorso "
+                        "sorgente non esiste più."
                     ),
                 ),
             ),
