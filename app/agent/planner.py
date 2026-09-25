@@ -745,17 +745,7 @@ class AgentPlanner:
             if not isinstance(output, dict):
                 continue
 
-            path = output.get("path")
-            if not isinstance(path, str) or not path.strip():
-                continue
-
             tool_name = value.get("tool_name")
-
-            if tool_name in {
-                "read_file",
-                "write_file",
-            }:
-                return path
 
             if tool_name in {
                 "copy_path",
@@ -764,10 +754,24 @@ class AgentPlanner:
                 destination = output.get("destination")
                 if isinstance(destination, str) and destination.strip():
                     return destination
-                return path
 
-            if output.get("is_file") is True or output.get("type") == "file":
-                return path
+                source = output.get("source")
+                if isinstance(source, str) and source.strip():
+                    return source
+
+            path = output.get("path")
+            if isinstance(path, str) and path.strip():
+                if tool_name in {
+                    "read_file",
+                    "write_file",
+                }:
+                    return path
+
+                if (
+                    output.get("is_file") is True
+                    or output.get("type") == "file"
+                ):
+                    return path
 
         return None
 
