@@ -399,6 +399,66 @@ class MoveRouter:
         )
 
 
+
+
+def test_move_request_with_agent_prefix_never_uses_copy() -> None:
+    planner = AgentPlanner(MoveRouter())
+
+    source = r"C:\Users\picco\IRIS\iris-core\test\file.txt"
+    root = r"C:\Users\picco\IRIS\iris-core"
+
+    context = "\n".join(
+        [
+            "STATO OPERATIVO RECENTE:",
+            json.dumps(
+                {
+                    "tool_name": "write_file",
+                    "arguments": {"path": source},
+                    "output": {"path": source},
+                }
+            ),
+            "AMBIENTE REALE DEL PROCESSO:",
+            f"- RADICE GIT DEL PROGETTO: {root}",
+        ]
+    )
+
+    plan = planner.plan(
+        goal="/agent sposta quel file",
+        context=context,
+        tool_definitions=[
+            {
+                "name": "copy_path",
+                "description": "Copia un file.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "source": {"type": "string"},
+                        "destination": {"type": "string"},
+                    },
+                    "required": ["source", "destination"],
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "name": "move_path",
+                "description": "Sposta un file.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "source": {"type": "string"},
+                        "destination": {"type": "string"},
+                    },
+                    "required": ["source", "destination"],
+                    "additionalProperties": False,
+                },
+            },
+        ],
+    )
+
+    assert plan.steps[0].tool_name == "move_path"
+    assert plan.steps[0].arguments["source"] == source
+    assert plan.steps[0].arguments["destination"] != source
+
 def test_move_request_never_degrades_to_copy() -> None:
     router = MoveRouter()
     planner = AgentPlanner(router)
