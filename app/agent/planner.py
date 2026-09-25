@@ -731,6 +731,67 @@ class AgentPlanner:
         )
 
     @staticmethod
+    def _build_file_reference_search_query(
+        normalized_goal: str,
+    ) -> str | None:
+        """
+        Costruisce una query filesystem generica da una descrizione del file.
+
+        La query usa i termini descrittivi rimasti dopo la rimozione delle
+        parole operative comuni. Non contiene nomi di file hardcoded.
+        """
+        tokens = re.findall(
+            r"[A-Za-z0-9_\-]+",
+            normalized_goal.lower(),
+        )
+
+        ignored = {
+            "sposta",
+            "spostare",
+            "file",
+            "cartella",
+            "directory",
+            "in",
+            "un",
+            "una",
+            "uno",
+            "altra",
+            "altro",
+            "altra",
+            "posizione",
+            "posto",
+            "nella",
+            "nel",
+            "nello",
+            "di",
+            "del",
+            "della",
+            "dei",
+            "degli",
+            "le",
+            "il",
+            "lo",
+            "la",
+            "e",
+            "poi",
+            "su",
+            "verso",
+        }
+
+        meaningful = [
+            token
+            for token in tokens
+            if token not in ignored
+        ]
+
+        if not meaningful:
+            return None
+
+        # Il filesystem supporta wildcard: una query composta conserva
+        # il riferimento descrittivo senza imporre un nome completo.
+        return "*" + "*".join(meaningful) + "*"
+
+    @staticmethod
     def _extract_recent_file(context: str) -> str | None:
         for line in context.splitlines():
             try:
@@ -758,6 +819,43 @@ class AgentPlanner:
                 source = output.get("source")
                 if isinstance(source, str) and source.strip():
                     return source
+
+            if tool_name == "search_files":
+                results = output.get("results")
+
+                if isinstance(results, list):
+                    file_results = [
+                        item
+                        for item in results
+                        if (
+                            isinstance(item, dict)
+                            and item.get("is_file") is True
+                            and isinstance(item.get("path"), str)
+                            and item.get("path").strip()
+                        )
+                    ]
+
+                    if len(file_results) == 1:
+                        return str(file_results[0]["path"])
+
+                    query = output.get("query")
+                    if (
+                        isinstance(query, str)
+                        and query.strip()
+                        and len(file_results) > 1
+                    ):
+                        normalized_query = query.strip().casefold()
+                        exact_matches = [
+                            item
+                            for item in file_results
+                            if (
+                                str(item.get("name", "")).casefold()
+                                == normalized_query
+                            )
+                        ]
+
+                        if len(exact_matches) == 1:
+                            return str(exact_matches[0]["path"])
 
             path = output.get("path")
             if isinstance(path, str) and path.strip():
@@ -811,8 +909,47 @@ class AgentPlanner:
         source = self._extract_recent_file(context)
         destination_root = self._extract_project_directory(context)
 
-        if source is None or destination_root is None:
+        if destination_root is None:
             return None
+
+        if source is None:
+            if "search_files" not in tool_names:
+                return None
+
+            search_query = self._build_file_reference_search_query(
+                normalized
+            )
+
+            if search_query is None:
+                return None
+
+            return AgentPlan(
+                goal=goal,
+                steps=(
+                    AgentPlanStep(
+                        tool_name="search_files",
+                        arguments={
+                            "query": search_query,
+                            "location": str(
+                                Path(destination_root).resolve(strict=False)
+                            ),
+                            "include_directories": False,
+                            "case_sensitive": False,
+                        },
+                        description=(
+                            "Cerca nel filesystem reale il file descritto "
+                            "dall'utente prima di tentare lo spostamento."
+                        ),
+                        success_criteria=(
+                            "La ricerca restituisce il file da spostare "
+                            "oppure un insieme di risultati sufficientemente "
+                            "specifico per identificarlo."
+                        ),
+                    ),
+                ),
+                decision=AgentDecision.CONTINUE,
+                message=None,
+            )
 
         source_path = Path(source).resolve(strict=False)
         root_path = Path(destination_root).resolve(strict=False)
