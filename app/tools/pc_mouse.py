@@ -207,6 +207,202 @@ class ClickMouseTool(Tool):
         )
 
 
+
+
+class MoveMouseTool(Tool):
+    """
+    Sposta il cursore del mouse a coordinate valide e verifica
+    la posizione finale.
+    """
+
+    def __init__(self) -> None:
+        self._definition = ToolDefinition(
+            name="move_mouse",
+            description=(
+                "Sposta il cursore del mouse a una coordinata "
+                "dello schermo e verifica che Windows abbia "
+                "raggiunto la posizione richiesta."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "x": {
+                        "type": "integer",
+                        "description": (
+                            "Coordinata orizzontale dello schermo."
+                        ),
+                        "minimum": 0,
+                    },
+                    "y": {
+                        "type": "integer",
+                        "description": (
+                            "Coordinata verticale dello schermo."
+                        ),
+                        "minimum": 0,
+                    },
+                },
+                "required": [
+                    "x",
+                    "y",
+                ],
+                "additionalProperties": False,
+            },
+            risk_level="low",
+            permissions=frozenset(
+                {
+                    Permission.GUI.value,
+                }
+            ),
+        )
+
+    @property
+    def definition(self) -> ToolDefinition:
+        return self._definition
+
+    def execute(
+        self,
+        arguments: dict[str, Any],
+    ) -> ToolResult:
+        x = arguments.get("x")
+        y = arguments.get("y")
+
+        if isinstance(x, bool) or not isinstance(x, int):
+            return ToolResult(
+                success=False,
+                error="La coordinata 'x' deve essere un intero.",
+            )
+
+        if isinstance(y, bool) or not isinstance(y, int):
+            return ToolResult(
+                success=False,
+                error="La coordinata 'y' deve essere un intero.",
+            )
+
+        if x < 0 or y < 0:
+            return ToolResult(
+                success=False,
+                error=(
+                    "Le coordinate del mouse non possono essere negative."
+                ),
+            )
+
+        if not hasattr(ctypes, "windll"):
+            return ToolResult(
+                success=False,
+                error=(
+                    "Il controllo del mouse è disponibile "
+                    "solo su Windows."
+                ),
+            )
+
+        user32 = ctypes.windll.user32
+
+        try:
+            get_metrics = user32.GetSystemMetrics
+            get_metrics.argtypes = [
+                ctypes.c_int,
+            ]
+            get_metrics.restype = ctypes.c_int
+
+            screen_width = get_metrics(0)
+            screen_height = get_metrics(1)
+
+            if screen_width <= 0 or screen_height <= 0:
+                return ToolResult(
+                    success=False,
+                    error=(
+                        "Impossibile determinare la risoluzione "
+                        "dello schermo."
+                    ),
+                )
+
+            if x >= screen_width or y >= screen_height:
+                return ToolResult(
+                    success=False,
+                    error=(
+                        f"Coordinate fuori dallo schermo: "
+                        f"({x}, {y}). Risoluzione: "
+                        f"{screen_width}x{screen_height}."
+                    ),
+                )
+
+            set_cursor_pos = user32.SetCursorPos
+            set_cursor_pos.argtypes = [
+                wintypes.INT,
+                wintypes.INT,
+            ]
+            set_cursor_pos.restype = wintypes.BOOL
+
+            if not set_cursor_pos(x, y):
+                return ToolResult(
+                    success=False,
+                    error=(
+                        "Windows non ha consentito "
+                        "di spostare il cursore."
+                    ),
+                )
+
+            get_cursor_pos = user32.GetCursorPos
+            get_cursor_pos.argtypes = [
+                ctypes.POINTER(wintypes.POINT),
+            ]
+            get_cursor_pos.restype = wintypes.BOOL
+
+            point = wintypes.POINT()
+
+            if not get_cursor_pos(
+                ctypes.byref(point)
+            ):
+                return ToolResult(
+                    success=False,
+                    error=(
+                        "Il cursore è stato spostato, "
+                        "ma non è stato possibile verificare "
+                        "la posizione finale."
+                    ),
+                )
+
+            verified = (
+                int(point.x) == x
+                and int(point.y) == y
+            )
+
+            if not verified:
+                return ToolResult(
+                    success=False,
+                    output={
+                        "requested_x": x,
+                        "requested_y": y,
+                        "actual_x": int(point.x),
+                        "actual_y": int(point.y),
+                    },
+                    error=(
+                        "La posizione finale del cursore "
+                        "non corrisponde a quella richiesta."
+                    ),
+                )
+
+            return ToolResult(
+                success=True,
+                output={
+                    "x": x,
+                    "y": y,
+                    "verified": True,
+                    "screen_width": screen_width,
+                    "screen_height": screen_height,
+                },
+            )
+
+        except OSError as error:
+            return ToolResult(
+                success=False,
+                error=(
+                    f"Impossibile spostare il cursore: {error}"
+                ),
+            )
+
+
 __all__ = [
     "ClickMouseTool",
+    "MoveMouseTool",
 ]
