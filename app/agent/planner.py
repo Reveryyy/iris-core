@@ -220,6 +220,15 @@ class AgentPlanner:
         if reference_copy_plan is not None:
             return reference_copy_plan
 
+        reference_move_plan = self._build_move_creation_fallback(
+            goal=goal,
+            tool_definitions=available_tools,
+            context=context,
+        )
+
+        if reference_move_plan is not None:
+            return reference_move_plan
+
         system_content = self._build_system_prompt(
             tool_definitions=available_tools,
             context=context,
@@ -740,16 +749,96 @@ class AgentPlanner:
             if not isinstance(path, str) or not path.strip():
                 continue
 
-            if value.get("tool_name") in {
+            tool_name = value.get("tool_name")
+
+            if tool_name in {
                 "read_file",
                 "write_file",
             }:
+                return path
+
+            if tool_name in {
+                "copy_path",
+                "move_path",
+            }:
+                destination = output.get("destination")
+                if isinstance(destination, str) and destination.strip():
+                    return destination
                 return path
 
             if output.get("is_file") is True or output.get("type") == "file":
                 return path
 
         return None
+
+    def _build_move_creation_fallback(
+        self,
+        goal: str,
+        tool_definitions: list[dict[str, Any]],
+        context: str | None,
+    ) -> AgentPlan | None:
+        """Gestisce richieste di spostamento basate sullo stato verificato."""
+        if not context:
+            return None
+
+        tool_names = {
+            str(definition.get("name"))
+            for definition in tool_definitions
+            if isinstance(definition, dict)
+        }
+
+        if "move_path" not in tool_names:
+            return None
+
+        normalized = re.sub(
+            r"^\\s*/agent\\s+",
+            "",
+            goal.strip(),
+            flags=re.IGNORECASE,
+        )
+        normalized_lower = normalized.lower()
+
+        if "sposta" not in normalized_lower:
+            return None
+
+        source = self._extract_recent_file(context)
+        destination_root = self._extract_project_directory(context)
+
+        if source is None or destination_root is None:
+            return None
+
+        source_path = Path(source).resolve(strict=False)
+        root_path = Path(destination_root).resolve(strict=False)
+
+        destination = root_path / (
+            f"{source_path.stem}-moved-{uuid4().hex[:8]}{source_path.suffix}"
+        )
+
+        if destination == source_path:
+            destination = root_path / (
+                f"{source_path.stem}-moved-{uuid4().hex[:8]}{source_path.suffix}"
+            )
+
+        return AgentPlan(
+            goal=goal,
+            steps=(
+                AgentPlanStep(
+                    tool_name="move_path",
+                    arguments={
+                        "source": str(source_path),
+                        "destination": str(destination),
+                    },
+                    description=(
+                        "Sposta il file già identificato in una nuova posizione."
+                    ),
+                    success_criteria=(
+                        "La destinazione esiste e il percorso sorgente non esiste più."
+                    ),
+                ),
+            ),
+            decision=AgentDecision.DONE,
+            message=None,
+        )
 
     def _build_directory_creation_fallback(
         self,
@@ -1719,7 +1808,12 @@ class AgentPlanner:
             "identificato nello STATO OPERATIVO RECENTE ma la destinazione non "
             "è specificata, usa la radice del progetto come destinazione secondaria "
             "e assegna un nome di copia univoco; non usare ask_user solo per questa "
-            "ambiguità quando esiste una destinazione ragionevole e verificabile;\n\n"
+            "ambiguità quando esiste una destinazione ragionevole e verificabile;\n"
+            "- per qualsiasi richiesta che contiene 'sposta', usa SEMPRE move_path "
+            "e mai copy_path; quando la destinazione non è esplicitata ma il file è "
+            "identificato nello STATO OPERATIVO RECENTE, scegli una destinazione "
+            "distinta e verificabile nella radice del progetto; non usare ask_user "
+            "e non lasciare mai sorgente e destinazione uguali;\n\n"
 
             "SEMANTICA GUI:\n"
             "- 'seleziona tutto' -> press_key con key='CTRL+A';\n"
