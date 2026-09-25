@@ -1,0 +1,37 @@
+name: PC Agent Checks
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  pc-agent:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile Python sources
+        run: python -m compileall -q app tests
+
+      - name: Install pytest
+        run: python -m pip install pytest
+
+      - name: Run PC Agent discovery tests
+        run: >
+          python -m pytest -q
+          tests/test_pc_filesystem.py
+          tests/test_pc_filesystem_ops.py
+          tests/test_pc_system_discovery.py
+          tests/test_pc_state.py
+          tests/test_pc_gui_discovery.py
+          tests/test_pc_ui_automation.py
+          tests/test_pc_ui_interaction.py
