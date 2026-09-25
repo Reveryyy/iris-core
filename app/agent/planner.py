@@ -787,8 +787,13 @@ class AgentPlanner:
         if not meaningful:
             return None
 
-        # Il filesystem supporta wildcard: una query composta conserva
-        # il riferimento descrittivo senza imporre un nome completo.
+        # Il filesystem supporta wildcard. Quando la descrizione è
+        # "file di X", il nome reale può essere "X_file..." oppure
+        # "...X...file..."; la forma seguente mantiene entrambi i
+        # termini senza imporre un nome completo.
+        if len(meaningful) == 1:
+            return f"*{meaningful[0]}*file*"
+
         return "*" + "*".join(meaningful) + "*"
 
     @staticmethod
