@@ -61,6 +61,12 @@ from app.tools.pc_close import CloseApplicationTool
 from app.tools.pc_discovery import (
     DiscoverPCStateTool,
 )
+from app.tools.pc_system import (
+    DiscoverApplicationsTool,
+    DiscoverCommandsTool,
+    DiscoverSystemInfoTool,
+    ListProcessesTool,
+)
 from app.tools.pc_gui import TypeTextTool
 from app.tools.pc_keyboard import PressKeyTool
 from app.tools.pc_minimize import MinimizeWindowTool
@@ -269,6 +275,22 @@ def main() -> None:
 
     tool_registry.register(
         DiscoverPCStateTool()
+    )
+
+    tool_registry.register(
+        DiscoverSystemInfoTool()
+    )
+
+    tool_registry.register(
+        DiscoverCommandsTool()
+    )
+
+    tool_registry.register(
+        DiscoverApplicationsTool()
+    )
+
+    tool_registry.register(
+        ListProcessesTool()
     )
 
     # =========================================================================
