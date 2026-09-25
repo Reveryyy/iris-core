@@ -1,232 +1,207 @@
 from __future__ import annotations
 
 import ctypes
-import time
-from ctypes import wintypes
-from typing import Any
 
-from app.tools.base import Tool, ToolDefinition
-from app.tools.permissions import Permission
-from app.tools.result import ToolResult
+from app.tools.pc_mouse import (
+    ClickMouseTool,
+    MoveMouseTool,
+)
 
 
-MOUSEEVENTF_MOVE = 0x0001
-MOUSEEVENTF_LEFTDOWN = 0x0002
-MOUSEEVENTF_LEFTUP = 0x0004
-
-
-class ClickMouseTool(Tool):
-    """
-    Esegue un click sinistro del mouse a coordinate specifiche
-    dello schermo.
-    """
-
+class FakeUser32:
     def __init__(
         self,
-        click_delay_seconds: float = 0.05,
-    ) -> None:
+        cursor_x: int = 0,
+        cursor_y: int = 0,
+    ):
+        self.cursor_x = cursor_x
+        self.cursor_y = cursor_y
+        self.set_cursor_calls = []
+        self.mouse_event_calls = []
 
-        self.click_delay_seconds = click_delay_seconds
+    def GetSystemMetrics(self, index):
+        values = {
+            76: -1920,
+            77: 0,
+            78: 3840,
+            79: 1080,
+        }
 
-        self._definition = ToolDefinition(
-            name="click_mouse",
-            description=(
-                "Esegue un click sinistro del mouse alle "
-                "coordinate indicate sullo schermo."
-            ),
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "x": {
-                        "type": "integer",
-                        "description": (
-                            "Coordinata orizzontale del click."
-                        ),
-                        "minimum": 0,
-                    },
-                    "y": {
-                        "type": "integer",
-                        "description": (
-                            "Coordinata verticale del click."
-                        ),
-                        "minimum": 0,
-                    },
-                },
-                "required": [
-                    "x",
-                    "y",
-                ],
-                "additionalProperties": False,
-            },
-            risk_level="medium",
-            permissions=frozenset(
-                {
-                    Permission.GUI.value,
-                }
-            ),
-        )
+        return values[index]
 
-    @property
-    def definition(self) -> ToolDefinition:
-        return self._definition
-
-    def execute(
-        self,
-        arguments: dict[str, Any],
-    ) -> ToolResult:
-
-        x = arguments.get("x")
-        y = arguments.get("y")
-
-        if isinstance(x, bool) or not isinstance(x, int):
-            return ToolResult(
-                success=False,
-                error="La coordinata 'x' deve essere un intero.",
-            )
-
-        if isinstance(y, bool) or not isinstance(y, int):
-            return ToolResult(
-                success=False,
-                error="La coordinata 'y' deve essere un intero.",
-            )
-
-        if x < 0 or y < 0:
-            return ToolResult(
-                success=False,
-                error=(
-                    "Le coordinate del mouse non possono essere negative."
-                ),
-            )
-
-        if not hasattr(
-            ctypes,
-            "windll",
-        ):
-            return ToolResult(
-                success=False,
-                error=(
-                    "Il controllo del mouse è disponibile "
-                    "solo su Windows."
-                ),
-            )
-
-        user32 = ctypes.windll.user32
-
-        screen_width = user32.GetSystemMetrics(0)
-        screen_height = user32.GetSystemMetrics(1)
-
-        if screen_width <= 0 or screen_height <= 0:
-            return ToolResult(
-                success=False,
-                error=(
-                    "Impossibile determinare la risoluzione "
-                    "dello schermo."
-                ),
-            )
-
-        if x >= screen_width or y >= screen_height:
-            return ToolResult(
-                success=False,
-                error=(
-                    f"Coordinate fuori dallo schermo: "
-                    f"({x}, {y}). Risoluzione: "
-                    f"{screen_width}x{screen_height}."
-                ),
-            )
-
-        set_cursor_pos = user32.SetCursorPos
-
-        if hasattr(
-            set_cursor_pos,
-            "argtypes",
-        ):
-            set_cursor_pos.argtypes = [
-                wintypes.INT,
-                wintypes.INT,
-            ]
-
-        if hasattr(
-            set_cursor_pos,
-            "restype",
-        ):
-            set_cursor_pos.restype = wintypes.BOOL
-
-        mouse_event = user32.mouse_event
-
-        if hasattr(
-            mouse_event,
-            "argtypes",
-        ):
-            mouse_event.argtypes = [
-                wintypes.DWORD,
-                wintypes.DWORD,
-                wintypes.DWORD,
-                wintypes.DWORD,
-                ctypes.c_ulong,
-            ]
-
-        if hasattr(
-            mouse_event,
-            "restype",
-        ):
-            mouse_event.restype = None
-
-        try:
-            moved = set_cursor_pos(
+    def SetCursorPos(self, x, y):
+        self.set_cursor_calls.append(
+            (
                 x,
                 y,
             )
+        )
 
-            if not moved:
-                return ToolResult(
-                    success=False,
-                    error=(
-                        "Windows non ha consentito "
-                        "di spostare il cursore."
-                    ),
-                )
+        self.cursor_x = x
+        self.cursor_y = y
 
-            if self.click_delay_seconds > 0:
-                time.sleep(
-                    self.click_delay_seconds
-                )
+        return True
 
-            mouse_event(
-                MOUSEEVENTF_LEFTDOWN,
-                0,
-                0,
-                0,
-                0,
+    def GetCursorPos(self, pointer):
+        point = pointer._obj
+        point.x = self.cursor_x
+        point.y = self.cursor_y
+        return True
+
+    def mouse_event(
+        self,
+        flags,
+        dx,
+        dy,
+        data,
+        extra_info,
+    ):
+        self.mouse_event_calls.append(
+            (
+                flags,
+                dx,
+                dy,
+                data,
+                extra_info,
             )
-
-            mouse_event(
-                MOUSEEVENTF_LEFTUP,
-                0,
-                0,
-                0,
-                0,
-            )
-
-        except OSError as error:
-            return ToolResult(
-                success=False,
-                error=(
-                    f"Impossibile eseguire il click: {error}"
-                ),
-            )
-
-        return ToolResult(
-            success=True,
-            output={
-                "x": x,
-                "y": y,
-                "screen_width": screen_width,
-                "screen_height": screen_height,
-                "button": "left",
-            },
         )
 
 
-__all__ = [
-    "ClickMouseTool",
-]
+def install_fake_user32(
+    monkeypatch,
+    user32,
+) -> None:
+    monkeypatch.setattr(
+        ctypes,
+        "windll",
+        type(
+            "FakeWindll",
+            (),
+            {
+                "user32": user32,
+            },
+        )(),
+        raising=False,
+    )
+
+
+def test_click_mouse_definition_uses_unbounded_coordinate_schema() -> None:
+    definition = ClickMouseTool().definition
+
+    assert definition.name == "click_mouse"
+
+    properties = definition.input_schema["properties"]
+
+    assert "minimum" not in properties["x"]
+    assert "minimum" not in properties["y"]
+
+
+def test_click_mouse_accepts_negative_virtual_desktop_coordinates(
+    monkeypatch,
+) -> None:
+    user32 = FakeUser32()
+
+    install_fake_user32(
+        monkeypatch,
+        user32,
+    )
+
+    result = ClickMouseTool().execute(
+        {
+            "x": -100,
+            "y": 200,
+        }
+    )
+
+    assert result.success is True
+
+    assert user32.set_cursor_calls == [
+        (
+            -100,
+            200,
+        )
+    ]
+
+    assert result.output["virtual_screen"] == {
+        "left": -1920,
+        "top": 0,
+        "width": 3840,
+        "height": 1080,
+    }
+
+
+def test_click_mouse_rejects_coordinate_outside_virtual_desktop(
+    monkeypatch,
+) -> None:
+    user32 = FakeUser32()
+
+    install_fake_user32(
+        monkeypatch,
+        user32,
+    )
+
+    result = ClickMouseTool().execute(
+        {
+            "x": 1920,
+            "y": 200,
+        }
+    )
+
+    assert result.success is False
+    assert "fuori" in result.error.lower()
+
+
+def test_move_mouse_definition_uses_unbounded_coordinate_schema() -> None:
+    definition = MoveMouseTool().definition
+
+    properties = definition.input_schema["properties"]
+
+    assert "minimum" not in properties["x"]
+    assert "minimum" not in properties["y"]
+
+
+def test_move_mouse_verifies_negative_virtual_desktop_coordinate(
+    monkeypatch,
+) -> None:
+    user32 = FakeUser32()
+
+    install_fake_user32(
+        monkeypatch,
+        user32,
+    )
+
+    result = MoveMouseTool().execute(
+        {
+            "x": -100,
+            "y": 200,
+        }
+    )
+
+    assert result.success is True
+
+    assert result.output["verified"] is True
+
+    assert user32.set_cursor_calls == [
+        (
+            -100,
+            200,
+        )
+    ]
+
+
+def test_move_mouse_requires_windows(monkeypatch) -> None:
+    monkeypatch.delattr(
+        ctypes,
+        "windll",
+        raising=False,
+    )
+
+    result = MoveMouseTool().execute(
+        {
+            "x": 100,
+            "y": 200,
+        }
+    )
+
+    assert result.success is False
+    assert "solo su windows" in result.error.lower()
