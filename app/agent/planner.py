@@ -224,6 +224,7 @@ class AgentPlanner:
             goal=goal,
             tool_definitions=available_tools,
             context=context,
+            observations=observations,
         )
 
         if reference_move_plan is not None:
@@ -658,6 +659,13 @@ class AgentPlanner:
             return None
 
         source = self._extract_recent_file(context)
+
+        if source is None:
+            source = self._extract_file_from_observations(
+                observations=observations,
+                goal=normalized,
+            )
+
         destination_root = self._extract_project_directory(context)
 
         if source is None or destination_root is None:
@@ -878,11 +886,152 @@ class AgentPlanner:
 
         return None
 
+    @staticmethod
+    def _extract_file_from_observations(
+        observations: list[AgentObservation] | None,
+        goal: str,
+    ) -> str | None:
+        if not observations:
+            return None
+
+        candidates: list[dict[str, Any]] = []
+
+        for observation in reversed(observations):
+            if (
+                observation.tool_name != "search_files"
+                or not observation.success
+                or not observation.verified
+                or not isinstance(observation.output, dict)
+            ):
+                continue
+
+            results = observation.output.get("results")
+
+            if not isinstance(results, list):
+                continue
+
+            candidates = [
+                item
+                for item in results
+                if (
+                    isinstance(item, dict)
+                    and item.get("is_file") is True
+                    and isinstance(item.get("path"), str)
+                    and item.get("path").strip()
+                )
+            ]
+
+            if candidates:
+                break
+
+        if not candidates:
+            return None
+
+        tokens = re.findall(
+            r"[A-Za-z0-9_\-]+",
+            goal.lower(),
+        )
+
+        ignored = {
+            "sposta",
+            "spostare",
+            "file",
+            "cartella",
+            "directory",
+            "in",
+            "un",
+            "una",
+            "uno",
+            "altra",
+            "altro",
+            "posizione",
+            "posto",
+            "nella",
+            "nel",
+            "nello",
+            "di",
+            "del",
+            "della",
+            "dei",
+            "degli",
+            "le",
+            "il",
+            "lo",
+            "la",
+            "e",
+            "poi",
+            "su",
+            "verso",
+        }
+
+        meaningful = [
+            token
+            for token in tokens
+            if token not in ignored
+        ]
+
+        if not meaningful:
+            return None
+
+        def score(candidate: dict[str, Any]) -> tuple[int, int, str, str]:
+            name = str(
+                candidate.get("name", "")
+            ).casefold()
+
+            token_hits = sum(
+                1
+                for token in meaningful
+                if token in name
+            )
+
+            adjacency_hits = sum(
+                1
+                for left, right in zip(
+                    meaningful,
+                    meaningful[1:],
+                )
+                if f"{left}_{right}" in name
+                or f"{left}-{right}" in name
+            )
+
+            prefix_hit = (
+                1
+                if meaningful[0] in name
+                and name.startswith(meaningful[0])
+                else 0
+            )
+
+            return (
+                token_hits,
+                adjacency_hits + prefix_hit,
+                str(candidate.get("modified_at", "")),
+                name,
+            )
+
+        ranked = sorted(
+            candidates,
+            key=score,
+            reverse=True,
+        )
+
+        best = ranked[0]
+
+        if len(ranked) > 1:
+            best_score = score(best)
+            second_score = score(ranked[1])
+
+            if best_score[:3] == second_score[:3]:
+                return None
+
+        return str(best["path"])
+
+
     def _build_move_creation_fallback(
         self,
         goal: str,
         tool_definitions: list[dict[str, Any]],
         context: str | None,
+        observations: list[AgentObservation] | None = None,
     ) -> AgentPlan | None:
         """Gestisce richieste di spostamento basate sullo stato verificato."""
         if not context:
