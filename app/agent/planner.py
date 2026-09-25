@@ -973,7 +973,7 @@ class AgentPlanner:
         if not meaningful:
             return None
 
-        def score(candidate: dict[str, Any]) -> tuple[int, int, str, str]:
+        def score(candidate: dict[str, Any]) -> tuple[int, int, str, str, int, str]:
             name = str(
                 candidate.get("name", "")
             ).casefold()
@@ -1001,10 +1001,23 @@ class AgentPlanner:
                 else 0
             )
 
+            created_at = str(
+                candidate.get("created_at", "")
+            )
+            modified_at = str(
+                candidate.get("modified_at", "")
+            )
+
+            # Quando una descrizione è generica ma ci sono più candidati,
+            # la risorsa più recentemente creata/modificata è il candidato
+            # più utile per riferimenti come "il file di test". I risultati
+            # del filesystem sono comunque la fonte di verità.
             return (
                 token_hits,
                 adjacency_hits + prefix_hit,
-                str(candidate.get("modified_at", "")),
+                created_at,
+                modified_at,
+                len(name),
                 name,
             )
 
@@ -1014,16 +1027,7 @@ class AgentPlanner:
             reverse=True,
         )
 
-        best = ranked[0]
-
-        if len(ranked) > 1:
-            best_score = score(best)
-            second_score = score(ranked[1])
-
-            if best_score[:3] == second_score[:3]:
-                return None
-
-        return str(best["path"])
+        return str(ranked[0]["path"])
 
 
     def _build_move_creation_fallback(
