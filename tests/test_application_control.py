@@ -440,6 +440,7 @@ def test_open_application_process_discovery_preserves_verification_metadata(
             "description": "Windows Calculator",
             "product": "Windows Calculator",
             "main_window_title": "Calcolatrice",
+            "main_window_handle": 0,
         }
     ]
 
@@ -802,6 +803,59 @@ def test_open_application_fails_when_process_cannot_be_verified(
     )
 
 
+def test_open_application_does_not_treat_background_process_as_already_running(
+    monkeypatch,
+):
+    application = ResolvedApplication(
+        name="Calcolatrice",
+        target="CalculatorApp.exe",
+        source="path",
+    )
+
+    tool = OpenApplicationTool(
+        resolver=FakeResolver(application)
+    )
+
+    processes = [
+        {
+            "pid": 777,
+            "name": "CalculatorApp",
+            "path": r"C:\Windows\SystemApps\CalculatorApp.exe",
+            "description": "Windows Calculator",
+            "product": "Windows Calculator",
+            "main_window_title": "",
+            "main_window_handle": 0,
+        }
+    ]
+
+    launch_called = False
+
+    def fake_launch(resolved):
+        nonlocal launch_called
+        launch_called = True
+        return 888
+
+    monkeypatch.setattr(
+        tool,
+        "_discover_processes",
+        lambda: processes,
+    )
+    monkeypatch.setattr(
+        tool,
+        "_launch",
+        fake_launch,
+    )
+
+    result = tool.execute(
+        {"name": "Calcolatrice"}
+    )
+
+    assert launch_called is True
+    assert result.success is False
+    assert result.output is not None
+    assert result.output["launch_pid"] == 888
+
+
 def test_open_application_accepts_preexisting_matching_process(
     monkeypatch,
 ):
@@ -822,6 +876,8 @@ def test_open_application_accepts_preexisting_matching_process(
             "pid": 555,
             "name": "notepad",
             "path": r"C:\Windows\System32\notepad.exe",
+            "main_window_title": "Untitled - Notepad",
+            "main_window_handle": 555,
         }
     ]
 
