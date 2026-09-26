@@ -157,6 +157,7 @@ class IRISCommandCompleter(Completer):
         ("/providers", "Mostra lo stato dei provider"),
         ("/status", "Mostra lo stato runtime"),
         ("/context", "Mostra token e context"),
+        ("/copy", "Copia la conversazione negli appunti"),
         ("/tools", "Mostra i tool disponibili"),
         ("/memory", "Mostra lo stato della memoria"),
         ("/permissions", "Mostra i permessi attivi"),
@@ -388,10 +389,6 @@ class TerminalUI:
 
             input_box.text = ""
             event.app.invalidate()
-
-        @bindings.add("c-s-c")
-        def _copy_transcript(event) -> None:
-            self._copy_transcript_to_clipboard()
 
         @bindings.add("s-tab")
         def _toggle_model(event) -> None:
@@ -1897,6 +1894,10 @@ class TerminalUI:
 
         if command == "/context":
             self._show_context()
+            return "handled"
+
+        if command == "/copy":
+            self._copy_transcript_to_clipboard()
             return "handled"
 
         if command == "/tools":
