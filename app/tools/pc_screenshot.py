@@ -137,7 +137,7 @@ class ScreenshotTool(Tool):
             screenshot_path = (
                 Path(output_path)
                 .expanduser()
-                .resolve(strict=False)
+                .resolve()
             )
             screenshots_directory = screenshot_path.parent
         else:
@@ -145,7 +145,7 @@ class ScreenshotTool(Tool):
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             screenshot_path = (
                 screenshots_directory / f"iris_{timestamp}.png"
-            ).resolve(strict=False)
+            ).resolve()
 
         if self.allowed_root is not None:
             try:
