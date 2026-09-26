@@ -349,7 +349,7 @@ def main() -> None:
 
     tool_registry.register(
         ScreenshotTool(
-            allowed_root=iris_directory,
+            default_directory=iris_directory,
         )
     )
 
