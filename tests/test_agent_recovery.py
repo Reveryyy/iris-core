@@ -197,3 +197,52 @@ def test_agent_loop_stops_when_planner_repeats_failed_action():
     assert result.decision == AgentDecision.ASK_USER
     assert len(result.steps) == 1
     assert len(planner.calls) == 2
+
+
+def test_agent_loop_returns_pending_plan_when_recovery_requires_confirmation():
+    first_plan = AgentPlan(
+        goal="Apri un'applicazione.",
+        steps=(
+            AgentPlanStep(
+                tool_name="echo",
+                arguments={"text": "app-not-found"},
+                description="Simula il rilevamento di un'app non disponibile.",
+            ),
+        ),
+        decision=AgentDecision.CONTINUE,
+    )
+
+    pending_plan = AgentPlan(
+        goal="Apri un'applicazione.",
+        steps=(
+            AgentPlanStep(
+                tool_name="echo",
+                arguments={"text": "installazione-autorizzata"},
+                description="Azione da eseguire dopo la conferma dell'utente.",
+            ),
+        ),
+        decision=AgentDecision.ASK_USER,
+        message="L'applicazione non è installata. Vuoi procedere con l'installazione?",
+    )
+
+    planner = SequencePlanner([first_plan, pending_plan])
+
+    loop = AgentLoop(
+        planner=planner,
+        execution_service=create_execution_service(),
+        verifier=SequenceVerifier([False]),
+    )
+
+    result = loop.run(
+        goal="Apri un'applicazione.",
+    )
+
+    assert result.completed is False
+    assert result.decision == AgentDecision.ASK_USER
+    assert result.message == (
+        "L'applicazione non è installata. Vuoi procedere con l'installazione?"
+    )
+    assert len(result.steps) == 1
+    assert result.plan.steps[0].arguments == {
+        "text": "installazione-autorizzata"
+    }
