@@ -675,7 +675,7 @@ class OpenApplicationTool(Tool):
             "-Command",
             (
                 "Get-Process | "
-                "Select-Object Id,ProcessName,Path | "
+                "Select-Object Id,ProcessName,Path,Description,Product,MainWindowTitle | "
                 "ConvertTo-Json -Compress"
             ),
         ]
@@ -1004,6 +1004,44 @@ class OpenApplicationTool(Tool):
             )
 
             if normalized_executable in expected_names:
+                return True
+
+        # Le app Windows moderne possono avere un nome visualizzato
+        # diverso dal nome tecnico del processo. Usiamo quindi anche
+        # i metadati restituiti da PowerShell senza introdurre una
+        # allowlist specifica per singole applicazioni.
+        for metadata_key in (
+            "description",
+            "product",
+            "main_window_title",
+        ):
+            metadata_value = process.get(
+                metadata_key
+            )
+
+            if not isinstance(
+                metadata_value,
+                str,
+            ) or not metadata_value.strip():
+                continue
+
+            normalized_metadata = (
+                OpenApplicationTool._normalize_name(
+                    metadata_value
+                )
+            )
+
+            if normalized_metadata in expected_names:
+                return True
+
+            if any(
+                normalized_expected
+                and (
+                    normalized_expected in normalized_metadata
+                    or normalized_metadata in normalized_expected
+                )
+                for normalized_expected in expected_names
+            ):
                 return True
 
         application_name = getattr(
