@@ -12,6 +12,7 @@ from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import (
     Dimension,
     Float,
@@ -427,6 +428,31 @@ class TerminalUI:
                 )
 
                 self._transcript_scroll_position += step
+
+            event.app.invalidate()
+
+        @bindings.add(Keys.ScrollUp)
+        def _transcript_mouse_scroll_up(event) -> None:
+            with self._state_lock:
+                if self._transcript_scroll_position is None:
+                    current = 10**9
+                else:
+                    current = self._transcript_scroll_position
+
+                self._transcript_scroll_position = max(
+                    0,
+                    current - 3,
+                )
+
+            event.app.invalidate()
+
+        @bindings.add(Keys.ScrollDown)
+        def _transcript_mouse_scroll_down(event) -> None:
+            with self._state_lock:
+                if self._transcript_scroll_position is None:
+                    return
+
+                self._transcript_scroll_position += 3
 
             event.app.invalidate()
 
