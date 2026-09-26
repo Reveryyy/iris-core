@@ -289,6 +289,7 @@ class OpenApplicationTool(Tool):
         already_running = self._find_matching_process(
             application=application,
             processes=processes_before,
+            require_visible_window=True,
         )
 
         if already_running is not None:
@@ -761,6 +762,10 @@ class OpenApplicationTool(Tool):
                 "MainWindowTitle"
             )
 
+            main_window_handle = item.get(
+                "MainWindowHandle"
+            )
+
             if not isinstance(
                 pid,
                 int,
@@ -808,6 +813,14 @@ class OpenApplicationTool(Tool):
                             str,
                         )
                         else None
+                    ),
+                    "main_window_handle": (
+                        main_window_handle
+                        if isinstance(
+                            main_window_handle,
+                            int,
+                        )
+                        else 0
                     ),
                 }
             )
@@ -892,6 +905,7 @@ class OpenApplicationTool(Tool):
     def _find_matching_process(
         application,
         processes: list[dict[str, Any]],
+        require_visible_window: bool = False,
     ) -> dict[str, Any] | None:
         expected_names = (
             OpenApplicationTool._expected_process_names(
@@ -903,10 +917,18 @@ class OpenApplicationTool(Tool):
             process
             for process
             in processes
-            if OpenApplicationTool._process_matches(
-                process=process,
-                expected_names=expected_names,
-                application=application,
+            if (
+                OpenApplicationTool._process_matches(
+                    process=process,
+                    expected_names=expected_names,
+                    application=application,
+                )
+                and (
+                    not require_visible_window
+                    or OpenApplicationTool._process_has_main_window(
+                        process
+                    )
+                )
             )
         ]
 
@@ -997,6 +1019,34 @@ class OpenApplicationTool(Tool):
             for name in names
             if name
         }
+
+    @staticmethod
+    def _process_has_main_window(
+        process: dict[str, Any],
+    ) -> bool:
+        handle = process.get(
+            "main_window_handle"
+        )
+
+        if isinstance(
+            handle,
+            int,
+        ) and handle > 0:
+            return True
+
+        title = process.get(
+            "main_window_title"
+        )
+
+        return (
+            isinstance(
+                title,
+                str,
+            )
+            and bool(
+                title.strip()
+            )
+        )
 
     @staticmethod
     def _process_matches(
