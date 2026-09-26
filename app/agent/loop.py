@@ -1115,6 +1115,33 @@ class AgentLoop:
                     parts
                 )
 
+        informative_keys = (
+            "commands",
+            "applications",
+            "processes",
+            "windows",
+            "elements",
+            "items",
+            "path_entries",
+            "environment_variable_names",
+        )
+
+        if any(
+            key in output
+            for key in informative_keys
+        ):
+            data = {
+                key: value
+                for key, value in output.items()
+                if key != "user_message"
+            }
+
+            return json.dumps(
+                data,
+                ensure_ascii=False,
+                indent=2,
+            )
+
         return None
 
     def _emit_completed(
