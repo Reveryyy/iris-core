@@ -482,59 +482,82 @@ class TerminalUI:
 
         @bindings.add("pageup")
         def _transcript_page_up(event) -> None:
-            with self._state_lock:
-                max_scroll = self._get_transcript_max_scroll()
+            pane = self._transcript_pane
 
-                if self._transcript_scroll_position is None:
-                    current = max_scroll
-                else:
-                    current = min(
-                        self._transcript_scroll_position,
-                        max_scroll,
-                    )
+            if pane is None:
+                return
+
+            with self._state_lock:
+                current = pane.vertical_scroll
 
                 step = max(
                     1,
                     self._get_transcript_available_rows() - 2,
                 )
 
-                self._transcript_scroll_position = max(
+                next_position = max(
                     0,
                     current - step,
+                )
+
+                pane.vertical_scroll = (
+                    next_position
+                )
+                self._transcript_scroll_position = (
+                    next_position
                 )
 
             event.app.invalidate()
 
         @bindings.add("pagedown")
         def _transcript_page_down(event) -> None:
-            with self._state_lock:
-                if self._transcript_scroll_position is None:
-                    return
+            pane = self._transcript_pane
 
-                max_scroll = self._get_transcript_max_scroll()
+            if pane is None:
+                return
+
+            with self._state_lock:
+                current = pane.vertical_scroll
+
                 step = max(
                     1,
                     self._get_transcript_available_rows() - 2,
                 )
 
-                self._transcript_scroll_position = min(
-                    max_scroll,
-                    self._transcript_scroll_position + step,
+                next_position = (
+                    current + step
+                )
+
+                pane.vertical_scroll = (
+                    next_position
+                )
+                self._transcript_scroll_position = (
+                    next_position
                 )
 
             event.app.invalidate()
 
         @bindings.add("c-home")
         def _transcript_home(event) -> None:
+            pane = self._transcript_pane
+
             with self._state_lock:
                 self._transcript_scroll_position = 0
+
+                if pane is not None:
+                    pane.vertical_scroll = 0
 
             event.app.invalidate()
 
         @bindings.add("c-end")
         def _transcript_end(event) -> None:
+            pane = self._transcript_pane
+
             with self._state_lock:
                 self._transcript_scroll_position = None
+
+                if pane is not None:
+                    pane.vertical_scroll = 10**9
 
             event.app.invalidate()
 
