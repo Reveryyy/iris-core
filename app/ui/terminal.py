@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shlex
+import subprocess
 import textwrap
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -387,6 +388,10 @@ class TerminalUI:
 
             input_box.text = ""
             event.app.invalidate()
+
+        @bindings.add("c-s-c")
+        def _copy_transcript(event) -> None:
+            self._copy_transcript_to_clipboard()
 
         @bindings.add("s-tab")
         def _toggle_model(event) -> None:
@@ -1994,6 +1999,91 @@ class TerminalUI:
             goal,
             application,
         )
+
+    # ========================================================================
+    # CLIPBOARD
+    # ========================================================================
+
+    def _copy_transcript_to_clipboard(self) -> None:
+        """
+        Copia il transcript corrente negli appunti del sistema.
+
+        La UI usa il mouse per lo scroll, quindi la selezione nativa del
+        terminale non è sempre disponibile. Questo comando mantiene la
+        copia accessibile direttamente da IRIS.
+        """
+        with self._state_lock:
+            items = list(
+                self.transcript
+            )
+
+        lines: list[str] = []
+
+        for item in items:
+            if item.kind == "user":
+                lines.append(
+                    f"› {item.text}"
+                )
+
+            elif item.kind == "iris":
+                lines.append(
+                    f"IRIS"
+                    + (
+                        f" [{item.status}]"
+                        if item.status
+                        else ""
+                    )
+                )
+                lines.append(
+                    item.text
+                )
+
+                if item.meta:
+                    lines.append(
+                        item.meta
+                    )
+
+            elif item.kind == "system":
+                lines.append(
+                    f"· {item.text}"
+                )
+
+        text = "\n\n".join(
+            lines
+        )
+
+        if not text:
+            self._append_system(
+                "Nessun testo da copiare."
+            )
+            return
+
+        try:
+            subprocess.run(
+                ["clip"],
+                input=text,
+                text=True,
+                check=True,
+                creationflags=(
+                    getattr(
+                        subprocess,
+                        "CREATE_NO_WINDOW",
+                        0,
+                    )
+                ),
+            )
+
+            self._append_system(
+                "Conversazione copiata negli appunti."
+            )
+
+        except (
+            OSError,
+            subprocess.SubprocessError,
+        ) as error:
+            self._append_system(
+                f"Impossibile copiare la conversazione: {error}"
+            )
 
     # ========================================================================
     # SYSTEM
