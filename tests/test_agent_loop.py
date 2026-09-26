@@ -8,6 +8,7 @@ from app.agent import (
     AgentLoop,
     AgentObservation,
     AgentPlan,
+    AgentStepResult,
     AgentPlanStep,
     AgentVerifier,
 )
@@ -438,6 +439,70 @@ def test_agent_loop_does_not_continue_after_failed_verification():
         result.observations[0].verified
         is False
     )
+
+
+def test_agent_loop_final_message_prefers_tool_user_message_over_planner_message():
+    plan = AgentPlan(
+        goal="Apri un'applicazione.",
+        steps=(
+            AgentPlanStep(
+                tool_name="open_application",
+                arguments={"name": "Calcolatrice"},
+                description="Apri la Calcolatrice.",
+            ),
+        ),
+        decision=AgentDecision.DONE,
+        message="Piano generato per aprire la calcolatrice.",
+    )
+
+    step = AgentStepResult(
+        step=plan.steps[0],
+        tool_call=__import__("app.tools.call", fromlist=["ToolCall"]).ToolCall(
+            name="open_application",
+            arguments={"name": "Calcolatrice"},
+            call_id="test",
+        ),
+        tool_result=ToolResult(
+            success=True,
+            output={
+                "application": "Calcolatrice",
+                "already_running": True,
+                "user_message": "Calcolatrice è già in esecuzione.",
+            },
+        ),
+        verification=AgentVerifier().verify(
+            ToolResult(
+                success=True,
+                output={
+                    "application": "Calcolatrice",
+                    "already_running": True,
+                    "user_message": "Calcolatrice è già in esecuzione.",
+                },
+            )
+        ),
+        observation=AgentObservation(
+            step_index=1,
+            tool_name="open_application",
+            arguments={"name": "Calcolatrice"},
+            success=True,
+            output={
+                "application": "Calcolatrice",
+                "already_running": True,
+                "user_message": "Calcolatrice è già in esecuzione.",
+            },
+            verified=True,
+        ),
+    )
+
+    loop = AgentLoop.__new__(AgentLoop)
+
+    message = loop._build_final_message(
+        goal=plan.goal,
+        plan=plan,
+        steps=[step],
+    )
+
+    assert message == "Calcolatrice è già in esecuzione."
 
 
 def test_agent_loop_ask_user_decision():
