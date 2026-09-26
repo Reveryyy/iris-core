@@ -368,6 +368,7 @@ class IRISCore:
     ) -> str:
 
         tools = self._get_provider_tools()
+        last_tool_result = None
 
         for _ in range(
             self.MAX_TOOL_ROUNDS
@@ -407,6 +408,19 @@ class IRISCore:
                     tool_response.response
                     or ""
                 )
+
+                if (
+                    last_tool_result is not None
+                    and last_tool_result.success
+                ):
+                    tool_output = (
+                        AgentLoop._format_tool_output_for_user(
+                            last_tool_result.output
+                        )
+                    )
+
+                    if tool_output:
+                        final_response = tool_output
 
                 self.conversation.add_assistant_message(
                     final_response
@@ -465,6 +479,9 @@ class IRISCore:
             tool_result = (
                 tool_response.tool_result
             )
+
+            if tool_result is not None:
+                last_tool_result = tool_result
 
             if tool_result is None:
                 self.event_bus.emit(
