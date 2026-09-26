@@ -11,14 +11,8 @@ from typing import Any, Callable
 from prompt_toolkit import Application
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.document import Document
-from prompt_toolkit.data_structures import Point
-from prompt_toolkit.formatted_text import (
-    FormattedText,
-    fragment_list_to_text,
-    to_formatted_text,
-)
+from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.keys import Keys
 from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
 from prompt_toolkit.layout import (
     Dimension,
@@ -27,6 +21,7 @@ from prompt_toolkit.layout import (
     HSplit,
     Layout,
     VSplit,
+    ScrollablePane,
     Window,
 )
 from prompt_toolkit.layout.controls import FormattedTextControl
@@ -152,12 +147,12 @@ class TranscriptItem:
 
 class TranscriptTextControl(FormattedTextControl):
     """
-    Control del transcript che mantiene lo scroll manuale fuori dal
-    meccanismo automatico di Window.
+    Control del transcript che intercetta la rotellina e la delega al
+    ScrollablePane della UI.
 
-    FormattedTextControl usa di default la posizione cursore (0, 0).
-    Window usa quella posizione per limitare vertical_scroll; per questo
-    un transcript senza cursore reale non può essere scrollato correttamente.
+    Il pannello scrollabile è separato dallo scroll interno della Window:
+    in questo modo la rotellina non viene persa durante il redraw del
+    transcript.
     """
 
     def __init__(
@@ -170,55 +165,34 @@ class TranscriptTextControl(FormattedTextControl):
         super().__init__(
             text=text,
             show_cursor=False,
-            get_cursor_position=(
-                self._cursor_position
-            ),
-        )
-
-    def _cursor_position(self) -> Point:
-        formatted = to_formatted_text(
-            self.text
-        )
-
-        plain_text = fragment_list_to_text(
-            formatted
-        )
-
-        return Point(
-            x=0,
-            y=max(
-                0,
-                len(plain_text.split("\n")) - 1,
-            ),
         )
 
     def mouse_handler(
         self,
         mouse_event: MouseEvent,
     ):
+        pane = self._owner._transcript_pane
+
         if (
             mouse_event.event_type
             == MouseEventType.SCROLL_UP
         ):
+            if pane is None:
+                return None
+
             with self._owner._state_lock:
-                max_scroll = (
-                    self._owner._get_transcript_max_scroll()
-                )
-
-                if (
-                    self._owner._transcript_scroll_position
-                    is None
-                ):
-                    current = max_scroll
-                else:
-                    current = min(
-                        self._owner._transcript_scroll_position,
-                        max_scroll,
-                    )
-
-                self._owner._transcript_scroll_position = max(
+                current = pane.vertical_scroll
+                next_position = max(
                     0,
                     current - 3,
+                )
+
+                pane.vertical_scroll = (
+                    next_position
+                )
+
+                self._owner._transcript_scroll_position = (
+                    next_position
                 )
 
             self._owner._invalidate()
@@ -228,20 +202,18 @@ class TranscriptTextControl(FormattedTextControl):
             mouse_event.event_type
             == MouseEventType.SCROLL_DOWN
         ):
-            with self._owner._state_lock:
-                if (
-                    self._owner._transcript_scroll_position
-                    is None
-                ):
-                    return None
+            if pane is None:
+                return None
 
-                max_scroll = (
-                    self._owner._get_transcript_max_scroll()
+            with self._owner._state_lock:
+                current = pane.vertical_scroll
+
+                pane.vertical_scroll = (
+                    current + 3
                 )
 
-                self._owner._transcript_scroll_position = min(
-                    max_scroll,
-                    self._owner._transcript_scroll_position + 3,
+                self._owner._transcript_scroll_position = (
+                    pane.vertical_scroll
                 )
 
             self._owner._invalidate()
@@ -359,6 +331,7 @@ class TerminalUI:
 
         self._application: Application | None = None
         self._input_box: TextArea | None = None
+        self._transcript_pane: ScrollablePane | None = None
 
         self._executor = ThreadPoolExecutor(
             max_workers=2,
@@ -588,7 +561,7 @@ class TerminalUI:
             always_hide_cursor=True,
         )
 
-        transcript = Window(
+        transcript_window = Window(
             content=TranscriptTextControl(
                 self,
                 self._transcript_text,
@@ -596,10 +569,20 @@ class TerminalUI:
             style="class:root",
             wrap_lines=True,
             get_line_prefix=self._transcript_line_prefix,
-            get_vertical_scroll=self._get_transcript_vertical_scroll,
             always_hide_cursor=True,
             dont_extend_height=False,
         )
+
+        transcript = ScrollablePane(
+            content=transcript_window,
+            keep_cursor_visible=False,
+            keep_focused_window_visible=False,
+            show_scrollbar=False,
+            display_arrows=False,
+            max_available_height=10000,
+        )
+
+        self._transcript_pane = transcript
 
         composer = Frame(
             input_box,
@@ -752,6 +735,7 @@ class TerminalUI:
             mouse_support=True,
             erase_when_done=False,
             refresh_interval=0.2,
+            before_render=self._before_render,
         )
 
         return application, input_box
@@ -2478,6 +2462,30 @@ class TerminalUI:
     # ========================================================================
     # HELPERS
     # ========================================================================
+
+    def _before_render(self, application: Application) -> None:
+        """
+        Applica la posizione persistente del transcript prima di ogni render.
+
+        None significa "segui il fondo"; un intero rappresenta una posizione
+        manuale. ScrollablePane si occupa poi di clampare automaticamente
+        l'offset al contenuto reale disponibile.
+        """
+        pane = self._transcript_pane
+
+        if pane is None:
+            return
+
+        with self._state_lock:
+            position = self._transcript_scroll_position
+
+        if position is None:
+            pane.vertical_scroll = 10**9
+        else:
+            pane.vertical_scroll = max(
+                0,
+                position,
+            )
 
     def _invalidate(self) -> None:
         application = self._application
