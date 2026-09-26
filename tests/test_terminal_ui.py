@@ -151,3 +151,25 @@ def test_terminal_transcript_scroll_can_be_positioned_manually():
         )
         == 17
     )
+
+
+def test_agent_output_formatter_exposes_discovered_applications():
+    output = {
+        "count": 1,
+        "applications": [
+            {
+                "name": "Blocco Note",
+                "target": r"C:\\Windows\\notepad.exe",
+                "source": "start_menu",
+            }
+        ],
+        "user_message": "Ho scoperto 1 applicazioni disponibili sul PC.",
+    }
+
+    rendered = AgentLoop._format_tool_output_for_user(
+        output
+    )
+
+    assert rendered is not None
+    assert "Blocco Note" in rendered
+    assert "notepad.exe" in rendered
