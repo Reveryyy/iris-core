@@ -987,9 +987,6 @@ class AgentLoop:
             if detailed_message:
                 return detailed_message
 
-        if plan.message:
-            return plan.message
-
         for step_result in reversed(
             steps
         ):
@@ -1035,6 +1032,9 @@ class AgentLoop:
                         and value.strip()
                     ):
                         return value.strip()
+
+        if plan.message:
+            return plan.message
 
         return (
             "Operazione completata e verificata."
