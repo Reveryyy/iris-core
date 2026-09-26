@@ -462,7 +462,6 @@ class FakeResolver:
 
         return self.application
 
-
 def test_open_application_definition():
     tool = OpenApplicationTool(
         resolver=FakeResolver(None)
