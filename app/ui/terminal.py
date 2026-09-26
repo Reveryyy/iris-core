@@ -11,9 +11,11 @@ from typing import Any, Callable
 from prompt_toolkit import Application
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.document import Document
+from prompt_toolkit.data_structures import Point
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
+from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
 from prompt_toolkit.layout import (
     Dimension,
     Float,
@@ -142,6 +144,105 @@ class TranscriptItem:
     text: str
     status: str | None = None
     meta: str | None = None
+
+
+class TranscriptTextControl(FormattedTextControl):
+    """
+    Control del transcript che mantiene lo scroll manuale fuori dal
+    meccanismo automatico di Window.
+
+    FormattedTextControl usa di default la posizione cursore (0, 0).
+    Window usa quella posizione per limitare vertical_scroll; per questo
+    un transcript senza cursore reale non può essere scrollato correttamente.
+    """
+
+    def __init__(
+        self,
+        owner: "TerminalUI",
+        text: Any,
+    ) -> None:
+        self._owner = owner
+
+        super().__init__(
+            text=text,
+            show_cursor=False,
+            get_cursor_position=(
+                self._cursor_position
+            ),
+        )
+
+    def _cursor_position(self) -> Point:
+        content = self.create_content(
+            self._owner._get_transcript_available_width(),
+            None,
+        )
+
+        return Point(
+            x=0,
+            y=max(
+                0,
+                content.line_count - 1,
+            ),
+        )
+
+    def mouse_handler(
+        self,
+        mouse_event: MouseEvent,
+    ):
+        if (
+            mouse_event.event_type
+            == MouseEventType.SCROLL_UP
+        ):
+            with self._owner._state_lock:
+                max_scroll = (
+                    self._owner._get_transcript_max_scroll()
+                )
+
+                if (
+                    self._owner._transcript_scroll_position
+                    is None
+                ):
+                    current = max_scroll
+                else:
+                    current = min(
+                        self._owner._transcript_scroll_position,
+                        max_scroll,
+                    )
+
+                self._owner._transcript_scroll_position = max(
+                    0,
+                    current - 3,
+                )
+
+            self._owner._invalidate()
+            return None
+
+        if (
+            mouse_event.event_type
+            == MouseEventType.SCROLL_DOWN
+        ):
+            with self._owner._state_lock:
+                if (
+                    self._owner._transcript_scroll_position
+                    is None
+                ):
+                    return None
+
+                max_scroll = (
+                    self._owner._get_transcript_max_scroll()
+                )
+
+                self._owner._transcript_scroll_position = min(
+                    max_scroll,
+                    self._owner._transcript_scroll_position + 3,
+                )
+
+            self._owner._invalidate()
+            return None
+
+        return super().mouse_handler(
+            mouse_event
+        )
 
 
 # ============================================================================
@@ -443,41 +544,6 @@ class TerminalUI:
 
             event.app.invalidate()
 
-        @bindings.add(Keys.ScrollUp)
-        def _transcript_mouse_scroll_up(event) -> None:
-            with self._state_lock:
-                max_scroll = self._get_transcript_max_scroll()
-
-                if self._transcript_scroll_position is None:
-                    current = max_scroll
-                else:
-                    current = min(
-                        self._transcript_scroll_position,
-                        max_scroll,
-                    )
-
-                self._transcript_scroll_position = max(
-                    0,
-                    current - 3,
-                )
-
-            event.app.invalidate()
-
-        @bindings.add(Keys.ScrollDown)
-        def _transcript_mouse_scroll_down(event) -> None:
-            with self._state_lock:
-                if self._transcript_scroll_position is None:
-                    return
-
-                max_scroll = self._get_transcript_max_scroll()
-
-                self._transcript_scroll_position = min(
-                    max_scroll,
-                    self._transcript_scroll_position + 3,
-                )
-
-            event.app.invalidate()
-
         @bindings.add("c-home")
         def _transcript_home(event) -> None:
             with self._state_lock:
@@ -516,7 +582,8 @@ class TerminalUI:
         )
 
         transcript = Window(
-            content=FormattedTextControl(
+            content=TranscriptTextControl(
+                self,
                 self._transcript_text,
             ),
             style="class:root",
