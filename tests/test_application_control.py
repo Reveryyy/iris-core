@@ -417,7 +417,7 @@ def test_open_application_process_discovery_preserves_verification_metadata(
             "stderr": "",
             "stdout": (
                 '{"Id":123,"ProcessName":"CalculatorApp",'
-                '"Path":"C:\\\\Windows\\\\SystemApps\\\\CalculatorApp.exe",'
+                '"Path":"C:\\Windows\\SystemApps\\CalculatorApp.exe",'
                 '"Description":"Windows Calculator",'
                 '"Product":"Windows Calculator",'
                 '"MainWindowTitle":"Calcolatrice"}'
