@@ -545,11 +545,20 @@ class AgentLoop:
                             plan=replanned_plan,
                             steps=executed_steps,
                         )
+                    elif self._replay_only_replan_can_complete(
+                        goal=goal,
+                        observations=observations,
+                    ):
+                        decision = AgentDecision.DONE
+                        message = self._build_final_message(
+                            goal=goal,
+                            plan=replanned_plan,
+                            steps=executed_steps,
+                        )
                     else:
                         # Un replan CONTINUE composto soltanto da azioni già
-                        # eseguite non dimostra il completamento dell'obiettivo.
-                        # Non trasformiamo mai una pianificazione incompleta
-                        # in un falso DONE.
+                        # eseguite non dimostra il completamento dell'obiettivo
+                        # quando le azioni osservate erano solo discovery.
                         decision = AgentDecision.ASK_USER
                         message = (
                             replanned_plan.message
@@ -836,6 +845,55 @@ class AgentLoop:
             decision=plan.decision,
             message=plan.message,
         )
+
+    @staticmethod
+    def _replay_only_replan_can_complete(
+        goal: str,
+        observations: list[AgentObservation],
+    ) -> bool:
+        """
+        Permette di chiudere un replan che ripropone esclusivamente
+        un'azione già eseguita quando quell'azione era effettivamente
+        un'azione finale e il goal non appare composto.
+
+        Una semplice discovery (search/list/inspect/discover) non viene
+        considerata sufficiente per completare il goal.
+        """
+        if not observations:
+            return False
+
+        if AgentLoop._goal_explicitly_requests_repetition(
+            goal
+        ):
+            return False
+
+        if AgentPlanner._looks_like_multi_step_goal(
+            goal
+        ):
+            return False
+
+        completed = [
+            observation
+            for observation in observations
+            if (
+                observation.success
+                and observation.verified
+            )
+        ]
+
+        if not completed:
+            return False
+
+        discovery_tools = {
+            "search_files",
+            "list_directory",
+            "inspect_path",
+            "discover_pc_state",
+            "discover_applications",
+            "discover_environment",
+        }
+
+        return completed[-1].tool_name not in discovery_tools
 
     @staticmethod
     def _step_signature(
