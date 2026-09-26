@@ -398,7 +398,8 @@ class TerminalUI:
             event.app.invalidate()
 
         @bindings.add("pageup")
-        def _transcript_page_up(event) -> None:            with self._state_lock:
+        def _transcript_page_up(event) -> None:
+            with self._state_lock:
                 if self._transcript_scroll_position is None:
                     current = 10**9
                 else:
@@ -472,7 +473,8 @@ class TerminalUI:
 
         @bindings.add("/")
         def _slash_completion(event) -> None:
-            if self._busy or self._help_visible:                return
+            if self._busy or self._help_visible:
+                return
 
             buffer = event.current_buffer
 
@@ -745,8 +747,6 @@ class TerminalUI:
                     )
                 )
 
-                self._transcript_scroll_position = None
-
         finally:
             with self._state_lock:
                 self._busy = False
@@ -822,7 +822,8 @@ class TerminalUI:
                 0,
             )
 
-            meta = (                f"{total_seconds:.2f}s total  ·  "
+            meta = (
+                f"{total_seconds:.2f}s total  ·  "
                 f"{planning_seconds:.2f}s planning  ·  "
                 f"{execution_seconds:.2f}s tool  ·  "
                 f"{verification_seconds:.2f}s verify  ·  "
@@ -872,14 +873,13 @@ class TerminalUI:
                     )
                 )
 
-                self._transcript_scroll_position = None
-
         finally:
             with self._state_lock:
                 self._busy = False
 
             if application is not None:
                 application.invalidate()
+
     # ========================================================================
     # CALLBACKS
     # ========================================================================
@@ -979,8 +979,7 @@ class TerminalUI:
             else ""
         )
 
-        return FormattedText(
-            [
+        return FormattedText(            [
                 (
                     "class:header.accent",
                     "IRIS",
@@ -1177,8 +1176,6 @@ class TerminalUI:
             position = self._transcript_scroll_position
 
         if position is None:
-            # Un valore elevato viene poi limitato internamente da
-            # prompt_toolkit all'ultimo offset valido: autoscroll in fondo.
             return 10**9
 
         return max(
@@ -1217,7 +1214,8 @@ class TerminalUI:
         used_rows = 0
 
         # Il live activity occupa alcune righe quando IRIS sta lavorando.
-        live_rows = (            0
+        live_rows = (
+            0
             if not self._busy
             else 4
         )
@@ -1295,7 +1293,8 @@ class TerminalUI:
             return 12
 
         try:
-            output = application.output            size = output.get_size()
+            output = application.output
+            size = output.get_size()
 
             total_rows = int(
                 size.rows
@@ -1616,7 +1615,8 @@ class TerminalUI:
                     (
                         "class:composer.busy",
                         "    IRIS sta lavorando...",
-                    ),                ]
+                    ),
+                ]
             )
 
         return FormattedText(
@@ -1693,7 +1693,8 @@ class TerminalUI:
 
             fragments.extend(
                 [
-                    (                        "class:help.command",
+                    (
+                        "class:help.command",
                         f"    {command}",
                     ),
                     (
@@ -1893,7 +1894,6 @@ class TerminalUI:
                 parts
             )
             return "handled"
-
         self._append_system(
             (
                 f"Comando sconosciuto: "
@@ -2017,3 +2017,393 @@ class TerminalUI:
                     "Formato: /model provider:model"
                 )
                 return
+
+            try:
+                self.router.set_provider_model(
+                    provider_name,
+                    model,
+                )
+
+                self.router.set_forced_provider(
+                    provider_name
+                )
+
+                self._append_system(
+                    (
+                        "FORCED · "
+                        f"{provider_name} / {model}"
+                    )
+                )
+
+            except Exception as error:
+                self._append_system(
+                    str(error)
+                )
+
+            return
+
+        try:
+            self.router.set_forced_provider(
+                target
+            )
+
+            provider = (
+                self.router.get_provider(
+                    target
+                )
+            )
+
+            self._append_system(
+                (
+                    "FORCED · "
+                    f"{target} / "
+                    f"{getattr(provider, 'model', '-')}"
+                )
+            )
+
+        except Exception as error:
+            self._append_system(
+                str(error)
+            )
+
+    def _show_providers(self) -> None:
+        statuses = (
+            self.router.provider_status()
+        )
+
+        rows = []
+
+        for provider in self.router.providers:
+            name = getattr(
+                provider,
+                "name",
+                provider.__class__.__name__,
+            )
+
+            rows.append(
+                (
+                    str(name),
+                    (
+                        f"{getattr(provider, 'model', '-')}"
+                        f"  "
+                        f"{statuses.get(str(name).lower(), 'unknown')}"
+                    ),
+                )
+            )
+
+        self._append_multiline_system(
+            "PROVIDERS",
+            rows,
+        )
+
+    def _show_status(self) -> None:
+        with self._state_lock:
+            provider = self.state.provider
+            model = self.state.model
+            task = self.state.task
+            phase = self.state.phase
+            tool_name = self.state.tool_name
+            verification_status = (
+                self.state.verification_status
+            )
+
+        self._append_system(
+            "  ".join(
+                [
+                    f"provider={provider}",
+                    f"model={model}",
+                    f"task={task}",
+                    f"phase={phase}",
+                    f"tool={tool_name or '-'}",
+                    (
+                        "verify="
+                        f"{verification_status}"
+                    ),
+                ]
+            )
+        )
+
+    def _show_context(self) -> None:
+        with self._state_lock:
+            input_tokens = self.state.input_tokens
+            output_tokens = self.state.output_tokens
+            total_tokens = self.state.total_tokens
+            context_text = self._context_text()
+
+        self._append_system(
+            (
+                f"input={input_tokens or '-'}  "
+                f"output={output_tokens or '-'}  "
+                f"total={total_tokens or '-'}  "
+                f"context={context_text}"
+            )
+        )
+
+    def _show_tools(self) -> None:
+        definitions = (
+            self.tool_registry.definitions()
+        )
+
+        rows = [
+            (
+                str(
+                    item.get(
+                        "name",
+                        "?",
+                    )
+                ),
+                str(
+                    item.get(
+                        "description",
+                        "",
+                    )
+                ),
+            )
+            for item in definitions
+        ]
+
+        self._append_multiline_system(
+            "TOOLS",
+            rows,
+        )
+
+    def _show_memory(self) -> None:
+        with self._state_lock:
+            memory_hits = self.state.memory_hits
+
+        self._append_system(
+            (
+                "memory hits="
+                f"{memory_hits}  "
+                "status=connected"
+            )
+        )
+
+    def _show_permissions(self) -> None:
+        granted = getattr(
+            self.permission_manager,
+            "granted",
+            set(),
+        )
+
+        names = sorted(
+            str(
+                getattr(
+                    item,
+                    "value",
+                    item,
+                )
+            )
+            for item in granted
+        )
+
+        self._append_system(
+            (
+                "permissions="
+                + (
+                    ", ".join(names)
+                    if names
+                    else "none"
+                )
+            )
+        )
+
+    def _show_settings(self) -> None:
+        mode = (
+            "FORCED"
+            if self.router.forced_provider
+            else "AUTO"
+        )
+
+        with self._state_lock:
+            debug = self.debug_enabled
+
+        self._append_system(
+            (
+                f"mode={mode}  "
+                f"forced_provider="
+                f"{self.router.forced_provider or '-'}  "
+                f"debug="
+                f"{'ON' if debug else 'OFF'}  "
+                f"tools="
+                f"{len(self.tool_registry.definitions())}  "
+                f"providers="
+                f"{len(self.router.providers)}"
+            )
+        )
+
+    def _append_multiline_system(
+        self,
+        title: str,
+        rows: list[tuple[str, str]],
+    ) -> None:
+        text_lines = [
+            title,
+            "",
+        ]
+
+        for left, right in rows:
+            text_lines.append(
+                f"{left}    {right}"
+            )
+
+        self._append_system(
+            "\n".join(text_lines)
+        )
+
+    # ========================================================================
+    # HELPERS
+    # ========================================================================
+
+    def _invalidate(self) -> None:
+        application = self._application
+
+        if application is not None:
+            application.invalidate()
+
+    def _step_text(self) -> str:
+        with self._state_lock:
+            return self._step_text_from_values(
+                current_step=self.state.current_step,
+                total_steps=self.state.total_steps,
+            )
+
+    @staticmethod
+    def _step_text_from_values(
+        current_step,
+        total_steps,
+    ) -> str:
+        if not total_steps:
+            return ""
+
+        return (
+            "step "
+            f"{current_step or 0}"
+            "/"
+            f"{total_steps}"
+        )
+
+    def _context_text(self) -> str:
+        if self.state.context_tokens is None:
+            return "n/d"
+
+        if self.state.context_limit is None:
+            return (
+                f"{self.state.context_tokens}"
+                "/n/d"
+            )
+
+        pct = (
+            self.state.context_tokens
+            / max(
+                1,
+                self.state.context_limit,
+            )
+        ) * 100
+
+        return (
+            f"{self.state.context_tokens}/"
+            f"{self.state.context_limit} "
+            f"({pct:.1f}%)"
+        )
+
+    def _current_provider_display(
+        self,
+    ) -> str:
+        return (
+            self.router.current_provider_name()
+            or "-"
+        )
+
+    def _current_model_display(
+        self,
+    ) -> str:
+        provider_name = (
+            self.router.current_provider_name()
+        )
+
+        if not provider_name:
+            return "-"
+
+        try:
+            provider = (
+                self.router.get_provider(
+                    provider_name
+                )
+            )
+
+            return str(
+                getattr(
+                    provider,
+                    "model",
+                    "-",
+                )
+            )
+
+        except Exception:
+            return "-"
+
+    @staticmethod
+    def _format_wrapped_text(
+        text: str,
+        spaces: int,
+    ) -> str:
+        """
+        Prepara il testo per il rendering del transcript.
+
+        Le righe generate manualmente mantengono sempre la stessa
+        indentazione della prima riga, evitando che il wrapping
+        automatico di prompt_toolkit riporti le continuazioni
+        verso il margine sinistro.
+        """
+
+        prefix = " " * spaces
+
+        if not text:
+            return prefix
+
+        lines = text.splitlines()
+
+        if not lines:
+            return prefix
+
+        formatted_lines: list[str] = []
+
+        for line in lines:
+            if not line:
+                formatted_lines.append(
+                    prefix.rstrip()
+                )
+                continue
+
+            formatted_lines.append(
+                prefix + line
+            )
+
+        return "\n".join(
+            formatted_lines
+        )
+
+    @staticmethod
+    def _indent_text(
+        text: str,
+        spaces: int,
+    ) -> str:
+        """
+        Compatibilità con il resto della UI.
+        """
+
+        return TerminalUI._format_wrapped_text(
+            text,
+            spaces,
+        )
+
+    def _transcript_line_prefix(
+        self,
+        lineno: int,
+        wrap_count: int,
+    ) -> str:
+        if wrap_count > 0:
+            return "      "
+
+        return ""
