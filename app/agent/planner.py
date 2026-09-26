@@ -2709,7 +2709,8 @@ class AgentPlanner:
                     "type"
                 )
 
-                if response_type == "final":                    inner = parsed.get(
+                if response_type == "final":
+                    inner = parsed.get(
                         "content"
                     )
 
