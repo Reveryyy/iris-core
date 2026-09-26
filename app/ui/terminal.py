@@ -12,7 +12,11 @@ from prompt_toolkit import Application
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.document import Document
 from prompt_toolkit.data_structures import Point
-from prompt_toolkit.formatted_text import FormattedText
+from prompt_toolkit.formatted_text import (
+    FormattedText,
+    fragment_list_to_text,
+    to_formatted_text,
+)
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
@@ -172,16 +176,19 @@ class TranscriptTextControl(FormattedTextControl):
         )
 
     def _cursor_position(self) -> Point:
-        content = self.create_content(
-            self._owner._get_transcript_available_width(),
-            None,
+        formatted = to_formatted_text(
+            self.text
+        )
+
+        plain_text = fragment_list_to_text(
+            formatted
         )
 
         return Point(
             x=0,
             y=max(
                 0,
-                content.line_count - 1,
+                len(plain_text.split("\n")) - 1,
             ),
         )
 
