@@ -920,24 +920,14 @@ class AgentLoop:
                 step_result.tool_result.output
             )
 
-            if not isinstance(
-                output,
-                dict,
-            ):
-                continue
-
-            user_message = output.get(
-                "user_message"
+            detailed_message = (
+                self._format_tool_output_for_user(
+                    output
+                )
             )
 
-            if (
-                isinstance(
-                    user_message,
-                    str,
-                )
-                and user_message.strip()
-            ):
-                return user_message.strip()
+            if detailed_message:
+                return detailed_message
 
         if plan.message:
             return plan.message
@@ -952,34 +942,180 @@ class AgentLoop:
                 step_result.tool_result.output
             )
 
-            if not isinstance(
+            if isinstance(
                 output,
                 dict,
             ):
-                continue
-
-            for key in (
-                "message",
-                "response",
-                "answer",
-                "text",
-            ):
-                value = output.get(
-                    key
+                user_message = output.get(
+                    "user_message"
                 )
 
                 if (
                     isinstance(
-                        value,
+                        user_message,
                         str,
                     )
-                    and value.strip()
+                    and user_message.strip()
                 ):
-                    return value.strip()
+                    return user_message.strip()
+
+                for key in (
+                    "message",
+                    "response",
+                    "answer",
+                    "text",
+                ):
+                    value = output.get(
+                        key
+                    )
+
+                    if (
+                        isinstance(
+                            value,
+                            str,
+                        )
+                        and value.strip()
+                    ):
+                        return value.strip()
 
         return (
             "Operazione completata e verificata."
         )
+
+    @staticmethod
+    def _format_tool_output_for_user(
+        output: Any,
+    ) -> str | None:
+        """
+        Trasforma i risultati informativi dei tool in un output realmente
+        leggibile dall'utente.
+
+        I tool che restituiscono solo un user_message continuano a usare
+        quello. Quando invece sono presenti dati richiesti dall'utente
+        (contenuto file, elenco directory, risultati di ricerca o stdout),
+        quei dati hanno la precedenza sul messaggio generico.
+        """
+        if isinstance(
+            output,
+            str,
+        ):
+            return output if output.strip() else None
+
+        if not isinstance(
+            output,
+            dict,
+        ):
+            return None
+
+        content = output.get(
+            "content"
+        )
+
+        if isinstance(
+            content,
+            str,
+        ):
+            path = output.get(
+                "path"
+            )
+
+            header = (
+                f"Contenuto di '{path}':"
+                if path
+                else "Contenuto:"
+            )
+
+            return (
+                header
+                + "\n\n"
+                + content
+            )
+
+        entries = output.get(
+            "entries"
+        )
+
+        if isinstance(
+            entries,
+            list,
+        ):
+            path = output.get(
+                "path"
+            )
+
+            title = (
+                f"Contenuto di '{path}':"
+                if path
+                else "Contenuto della directory:"
+            )
+
+            return (
+                title
+                + "\n"
+                + json.dumps(
+                    entries,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+
+        results = output.get(
+            "results"
+        )
+
+        if isinstance(
+            results,
+            list,
+        ):
+            title = "Risultati della ricerca:"
+            return (
+                title
+                + "\n"
+                + json.dumps(
+                    results,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+
+        stdout = output.get(
+            "stdout"
+        )
+
+        stderr = output.get(
+            "stderr"
+        )
+
+        if (
+            isinstance(stdout, str)
+            or isinstance(stderr, str)
+        ):
+            parts: list[str] = []
+
+            if isinstance(
+                stdout,
+                str,
+            ) and stdout:
+                parts.append(
+                    "STDOUT:\n"
+                    + stdout
+                )
+
+            if isinstance(
+                stderr,
+                str,
+            ) and stderr:
+                parts.append(
+                    "STDERR:\n"
+                    + stderr
+                )
+
+            if parts:
+                return "\n\n".join(
+                    parts
+                )
+
+        return None
 
     def _emit_completed(
         self,
