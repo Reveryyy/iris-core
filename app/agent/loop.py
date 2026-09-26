@@ -57,7 +57,8 @@ class AgentLoop:
         planner: AgentPlanner,
         execution_service: ToolExecutionService,
         verifier: AgentVerifier | None = None,
-        max_steps: int = 8,
+        max_steps: int = 64,
+        max_recovery_attempts: int = 3,
         event_bus: IRISEventBus | None = None,
     ) -> None:
         if max_steps <= 0:
@@ -65,10 +66,16 @@ class AgentLoop:
                 "max_steps deve essere maggiore di zero."
             )
 
+        if max_recovery_attempts < 0:
+            raise ValueError(
+                "max_recovery_attempts non può essere negativo."
+            )
+
         self.planner = planner
         self.execution_service = execution_service
         self.verifier = verifier or AgentVerifier()
         self.max_steps = max_steps
+        self.max_recovery_attempts = max_recovery_attempts
         self.event_bus = (
             event_bus
             or IRISEventBus()
@@ -281,6 +288,36 @@ class AgentLoop:
             )
 
             if not verification.verified:
+                recovery_result = self._recover_after_failure(
+                    goal=goal,
+                    context=context,
+                    tool_definitions=tool_definitions,
+                    observations=observations,
+                    failed_step=step,
+                    recovery_attempts=sum(
+                        1
+                        for observation in observations
+                        if not observation.verified
+                    ),
+                    planning_seconds=planning_seconds,
+                    planner_calls=planner_calls,
+                    total_start=total_start,
+                    executed_steps=executed_steps,
+                )
+
+                if recovery_result is not None:
+                    result, recovered_plan, planning_delta, planner_delta = recovery_result
+                    planning_seconds += planning_delta
+                    planner_calls += planner_delta
+
+                    if result is not None:
+                        self._emit_completed(result)
+                        return result
+
+                    if recovered_plan is not None:
+                        current_plan = recovered_plan
+                        continue
+
                 total_seconds = (
                     perf_counter()
                     - total_start
@@ -290,8 +327,7 @@ class AgentLoop:
                     goal=goal,
                     decision=AgentDecision.ASK_USER,
                     message=(
-                        "L'azione non ha superato "
-                        "la verifica. "
+                        "L'azione non ha superato la verifica. "
                         f"{verification.reason}"
                     ),
                     plan=current_plan,
@@ -560,6 +596,165 @@ class AgentLoop:
                 "Decisione dell'Agent Loop non supportata: "
                 f"{current_plan.decision!r}"
             )
+
+    def _recover_after_failure(
+        self,
+        goal: str,
+        context: str | None,
+        tool_definitions: list[dict[str, Any]] | None,
+        observations: list[AgentObservation],
+        failed_step: AgentPlanStep,
+        recovery_attempts: int,
+        planning_seconds: float,
+        planner_calls: int,
+        total_start: float,
+        executed_steps: list[AgentStepResult],
+    ) -> tuple[AgentLoopResult | None, AgentPlan | None, float, int] | None:
+        """Replanifica dopo un fallimento invece di abbandonare subito il goal."""
+        if recovery_attempts > self.max_recovery_attempts:
+            return None
+
+        current_context = self._build_replan_context(
+            context=context,
+            observations=observations,
+        )
+
+        planning_start = perf_counter()
+
+        self.event_bus.emit(
+            "planner.started",
+            goal=goal,
+            recovery=True,
+            failed_tool=failed_step.tool_name,
+        )
+
+        replanned_plan = self.planner.plan(
+            goal=goal,
+            context=current_context,
+            tool_definitions=tool_definitions,
+            observations=list(observations),
+        )
+
+        planning_elapsed = perf_counter() - planning_start
+
+        self.event_bus.emit(
+            "planner.completed",
+            steps=len(replanned_plan.steps),
+            planner_calls=planner_calls + 1,
+            recovery=True,
+            latency_seconds=planning_elapsed,
+        )
+
+        if replanned_plan.decision == AgentDecision.ASK_USER:
+            result = AgentLoopResult(
+                goal=goal,
+                decision=AgentDecision.ASK_USER,
+                message=(
+                    replanned_plan.message
+                    or (
+                        "L'azione precedente è fallita e serve una decisione "
+                        "dell'utente prima di continuare."
+                    )
+                ),
+                plan=replanned_plan,
+                steps=tuple(executed_steps),
+                observations=tuple(observations),
+                total_seconds=perf_counter() - total_start,
+                planning_seconds=planning_seconds + planning_elapsed,
+                execution_seconds=0.0,
+                verification_seconds=0.0,
+                planner_calls=planner_calls + 1,
+            )
+            return result, None, planning_elapsed, 1
+
+        failed_signature = self._step_signature(
+            tool_name=failed_step.tool_name,
+            arguments=failed_step.arguments,
+        )
+
+        first_new_step = (
+            replanned_plan.steps[0]
+            if replanned_plan.steps
+            else None
+        )
+
+        if first_new_step is not None:
+            first_signature = self._step_signature(
+                tool_name=first_new_step.tool_name,
+                arguments=first_new_step.arguments,
+            )
+        else:
+            first_signature = None
+
+        if first_signature == failed_signature:
+            result = AgentLoopResult(
+                goal=goal,
+                decision=AgentDecision.ASK_USER,
+                message=(
+                    replanned_plan.message
+                    or (
+                        "Il Planner ha riproposto l'azione che ha appena "
+                        "fallito. Serve un intervento dell'utente o una "
+                        "strategia alternativa."
+                    )
+                ),
+                plan=replanned_plan,
+                steps=tuple(executed_steps),
+                observations=tuple(observations),
+                total_seconds=perf_counter() - total_start,
+                planning_seconds=planning_seconds + planning_elapsed,
+                execution_seconds=0.0,
+                verification_seconds=0.0,
+                planner_calls=planner_calls + 1,
+            )
+            return result, None, planning_elapsed, 1
+
+        sanitized_plan = self._remove_replayed_steps(
+            plan=replanned_plan,
+            observations=observations,
+            goal=goal,
+        )
+
+        if sanitized_plan is None:
+            if replanned_plan.decision == AgentDecision.DONE:
+                result = AgentLoopResult(
+                    goal=goal,
+                    decision=AgentDecision.DONE,
+                    message=self._build_final_message(
+                        goal=goal,
+                        plan=replanned_plan,
+                        steps=executed_steps,
+                    ),
+                    plan=replanned_plan,
+                    steps=tuple(executed_steps),
+                    observations=tuple(observations),
+                    total_seconds=perf_counter() - total_start,
+                    planning_seconds=planning_seconds + planning_elapsed,
+                    execution_seconds=0.0,
+                    verification_seconds=0.0,
+                    planner_calls=planner_calls + 1,
+                )
+                return result, None, planning_elapsed, 1
+
+            result = AgentLoopResult(
+                goal=goal,
+                decision=AgentDecision.ASK_USER,
+                message=(
+                    replanned_plan.message
+                    or "Il Planner non ha prodotto una strategia di recupero eseguibile."
+                ),
+                plan=replanned_plan,
+                steps=tuple(executed_steps),
+                observations=tuple(observations),
+                total_seconds=perf_counter() - total_start,
+                planning_seconds=planning_seconds + planning_elapsed,
+                execution_seconds=0.0,
+                verification_seconds=0.0,
+                planner_calls=planner_calls + 1,
+            )
+            return result, None, planning_elapsed, 1
+
+        return None, sanitized_plan, planning_elapsed, 1
 
     def _remove_replayed_steps(
         self,
