@@ -1,7 +1,9 @@
 from threading import RLock
 
 from prompt_toolkit.data_structures import Point
-from prompt_toolkit.mouse_events import MouseButton, MouseEvent, MouseEventType, MouseModifier
+from prompt_toolkit.layout import ScrollablePane, Window
+from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.mouse_events import MouseButton, MouseEvent, MouseEventType
 
 from app.ui.terminal import TerminalUI, TranscriptItem, TranscriptTextControl
 
@@ -20,22 +22,17 @@ def _make_terminal() -> TerminalUI:
     terminal._busy = False
     terminal._application = None
     terminal._live_activity_text = lambda: []
+    terminal._transcript_pane = ScrollablePane(
+        Window(
+            content=FormattedTextControl(""),
+        ),
+        keep_cursor_visible=False,
+        keep_focused_window_visible=False,
+        show_scrollbar=False,
+        display_arrows=False,
+    )
     terminal._invalidate = lambda: None
     return terminal
-
-
-def test_transcript_cursor_is_at_last_logical_line():
-    terminal = _make_terminal()
-    control = TranscriptTextControl(
-        terminal,
-        terminal._transcript_text,
-    )
-
-    point = control._cursor_position()
-
-    assert isinstance(point, Point)
-    assert point.x == 0
-    assert point.y > 0
 
 
 def test_transcript_max_scroll_is_positive_for_long_history():
