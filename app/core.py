@@ -410,7 +410,8 @@ class IRISCore:
                 )
 
                 if (
-                    last_tool_result is not None
+                    not final_response.strip()
+                    and last_tool_result is not None
                     and last_tool_result.success
                 ):
                     tool_output = (
