@@ -38,3 +38,4 @@ jobs:
           tests/test_pc_gui_discovery.py
           tests/test_pc_ui_automation.py
           tests/test_pc_ui_interaction.py
+          tests/test_pc_screenshot.py
