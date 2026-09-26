@@ -1298,6 +1298,7 @@ class AgentPlanner:
     def _extract_project_directory(context: str) -> str | None:
         prefixes = (
             "- RADICE GIT DEL PROGETTO: ",
+            "- RADICE DEL PROGETTO: ",
             "- DIRECTORY DI LAVORO CORRENTE: ",
         )
 
