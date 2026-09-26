@@ -14,31 +14,37 @@ from app.tools.result import ToolResult
 class ScreenshotTool(Tool):
     """
     Cattura lo schermo principale e salva lo screenshot
-    esclusivamente nella directory autorizzata del PC Agent.
+    in una directory dinamica; il percorso di output può essere specificato.
     """
 
     def __init__(
         self,
-        allowed_root: str | Path | None = None,
+        default_directory: str | Path | None = None,
     ) -> None:
 
-        self.allowed_root = (
-            Path(
-                allowed_root
-                or Path.cwd()
-            )
-            .resolve()
+        self.default_directory = (
+            Path(default_directory).expanduser().resolve()
+            if default_directory is not None
+            else Path.cwd().resolve()
         )
 
         self._definition = ToolDefinition(
             name="screenshot",
             description=(
                 "Cattura lo schermo corrente e salva uno "
-                "screenshot PNG nella directory autorizzata."
+                "screenshot PNG. Il percorso di output è opzionale."
             ),
             input_schema={
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "output_path": {
+                        "type": "string",
+                        "description": (
+                            "Percorso completo del file PNG da creare. "
+                            "Se omesso, viene usata la directory predefinita."
+                        ),
+                    },
+                },
                 "additionalProperties": False,
             },
             risk_level="medium",
@@ -59,18 +65,23 @@ class ScreenshotTool(Tool):
         arguments: dict[str, Any],
     ) -> ToolResult:
 
-        if arguments:
+        output_path = arguments.get("output_path")
+
+        if output_path is not None and not isinstance(output_path, str):
             return ToolResult(
                 success=False,
-                error=(
-                    "Il tool screenshot non accetta argomenti."
-                ),
+                error="output_path deve essere una stringa.",
             )
 
-        screenshots_directory = (
-            self.allowed_root
-            / "screenshots"
-        )
+        if isinstance(output_path, str) and output_path.strip():
+            screenshot_path = Path(output_path).expanduser().resolve(strict=False)
+            screenshots_directory = screenshot_path.parent
+        else:
+            screenshots_directory = self.default_directory / "screenshots"
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            screenshot_path = (
+                screenshots_directory / f"iris_{timestamp}.png"
+            ).resolve(strict=False)
 
         try:
             screenshots_directory.mkdir(
@@ -83,28 +94,6 @@ class ScreenshotTool(Tool):
                 error=(
                     f"Impossibile creare la directory "
                     f"degli screenshot: {error}"
-                ),
-            )
-
-        timestamp = datetime.now().strftime(
-            "%Y%m%d_%H%M%S_%f"
-        )
-
-        screenshot_path = (
-            screenshots_directory
-            / f"iris_{timestamp}.png"
-        ).resolve()
-
-        try:
-            screenshot_path.relative_to(
-                self.allowed_root
-            )
-        except ValueError:
-            return ToolResult(
-                success=False,
-                error=(
-                    "Il percorso dello screenshot si trova "
-                    "fuori dalla directory autorizzata."
                 ),
             )
 
