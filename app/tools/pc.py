@@ -749,6 +749,18 @@ class OpenApplicationTool(Tool):
                 "Path"
             )
 
+            description = item.get(
+                "Description"
+            )
+
+            product = item.get(
+                "Product"
+            )
+
+            main_window_title = item.get(
+                "MainWindowTitle"
+            )
+
             if not isinstance(
                 pid,
                 int,
@@ -769,6 +781,30 @@ class OpenApplicationTool(Tool):
                         path
                         if isinstance(
                             path,
+                            str,
+                        )
+                        else None
+                    ),
+                    "description": (
+                        description
+                        if isinstance(
+                            description,
+                            str,
+                        )
+                        else None
+                    ),
+                    "product": (
+                        product
+                        if isinstance(
+                            product,
+                            str,
+                        )
+                        else None
+                    ),
+                    "main_window_title": (
+                        main_window_title
+                        if isinstance(
+                            main_window_title,
                             str,
                         )
                         else None
