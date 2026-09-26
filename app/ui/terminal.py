@@ -1922,6 +1922,7 @@ class TerminalUI:
                 )
             )
 
+            self._transcript_scroll_position = None
             self._busy = True
             self.state.reset_runtime()
 
