@@ -41,8 +41,24 @@ def test_transcript_max_scroll_is_positive_for_long_history():
     assert terminal._get_transcript_max_scroll() > 0
 
 
+def test_transcript_before_render_follows_bottom_and_preserves_manual_position():
+    terminal = _make_terminal()
+
+    terminal._transcript_scroll_position = None
+    terminal._before_render(None)
+
+    assert terminal._transcript_pane.vertical_scroll == 10**9
+
+    terminal._transcript_scroll_position = 7
+    terminal._before_render(None)
+
+    assert terminal._transcript_pane.vertical_scroll == 7
+
+
 def test_transcript_mouse_scroll_up_moves_from_bottom():
     terminal = _make_terminal()
+    terminal._transcript_pane.vertical_scroll = 30
+
     control = TranscriptTextControl(
         terminal,
         terminal._transcript_text,
@@ -79,10 +95,8 @@ def test_transcript_mouse_scroll_down_returns_toward_bottom():
 
     control.mouse_handler(event)
 
-    assert terminal._transcript_scroll_position == min(
-        3,
-        terminal._get_transcript_max_scroll(),
-    )
+    assert terminal._transcript_scroll_position == 3
+    assert terminal._transcript_pane.vertical_scroll == 3
 
 
 def test_transcript_new_message_resets_to_follow_bottom():
