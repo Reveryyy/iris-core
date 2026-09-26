@@ -397,8 +397,7 @@ class TerminalUI:
             event.app.invalidate()
 
         @bindings.add("pageup")
-        def _transcript_page_up(event) -> None:
-            with self._state_lock:
+        def _transcript_page_up(event) -> None:            with self._state_lock:
                 if self._transcript_scroll_position is None:
                     current = 10**9
                 else:
@@ -431,14 +430,14 @@ class TerminalUI:
 
             event.app.invalidate()
 
-        @bindings.add("home")
+        @bindings.add("c-home")
         def _transcript_home(event) -> None:
             with self._state_lock:
                 self._transcript_scroll_position = 0
 
             event.app.invalidate()
 
-        @bindings.add("end")
+        @bindings.add("c-end")
         def _transcript_end(event) -> None:
             with self._state_lock:
                 self._transcript_scroll_position = None
@@ -627,7 +626,7 @@ class TerminalUI:
             key_bindings=bindings,
             style=PROMPT_STYLE,
             full_screen=True,
-            mouse_support=False,
+            mouse_support=True,
             erase_when_done=False,
             refresh_interval=0.2,
         )
@@ -797,8 +796,7 @@ class TerminalUI:
                 0,
             )
 
-            meta = (
-                f"{total_seconds:.2f}s total  ·  "
+            meta = (                f"{total_seconds:.2f}s total  ·  "
                 f"{planning_seconds:.2f}s planning  ·  "
                 f"{execution_seconds:.2f}s tool  ·  "
                 f"{verification_seconds:.2f}s verify  ·  "
@@ -1012,11 +1010,7 @@ class TerminalUI:
         if help_visible:
             return self._help_text()
 
-        visible_items = (
-            self._get_visible_transcript_items(
-                transcript
-            )
-        )
+        visible_items = transcript
 
         fragments: list[
             tuple[str, str]
@@ -1197,8 +1191,7 @@ class TerminalUI:
         used_rows = 0
 
         # Il live activity occupa alcune righe quando IRIS sta lavorando.
-        live_rows = (
-            0
+        live_rows = (            0
             if not self._busy
             else 4
         )
@@ -1597,8 +1590,7 @@ class TerminalUI:
                     (
                         "class:composer.busy",
                         "    IRIS sta lavorando...",
-                    ),
-                ]
+                    ),                ]
             )
 
         return FormattedText(
@@ -1998,83 +1990,3 @@ class TerminalUI:
                     "Formato: /model provider:model"
                 )
                 return
-
-            try:
-                self.router.set_provider_model(
-                    provider_name,
-                    model,
-                )
-
-                self.router.set_forced_provider(
-                    provider_name
-                )
-
-                self._append_system(
-                    (
-                        "FORCED · "
-                        f"{provider_name} / {model}"
-                    )
-                )
-
-            except Exception as error:
-                self._append_system(
-                    str(error)
-                )
-
-            return
-
-        try:
-            self.router.set_forced_provider(
-                target
-            )
-
-            provider = (
-                self.router.get_provider(
-                    target
-                )
-            )
-
-            self._append_system(
-                (
-                    "FORCED · "
-                    f"{target} / "
-                    f"{getattr(provider, 'model', '-')}"
-                )
-            )
-
-        except Exception as error:
-            self._append_system(
-                str(error)
-            )
-
-    def _show_providers(self) -> None:
-        statuses = (
-            self.router.provider_status()
-        )
-
-        rows = []
-
-        for provider in self.router.providers:
-            name = getattr(
-                provider,
-                "name",
-                provider.__class__.__name__,
-            )
-
-            rows.append(
-                (
-                    str(name),
-                    (
-                        f"{getattr(provider, 'model', '-')}"
-                        f"  "
-                        f"{statuses.get(str(name).lower(), 'unknown')}"
-                    ),
-                )
-            )
-
-        self._append_multiline_system(
-            "PROVIDERS",
-            rows,
-        )
-
-    def _show_status(self) -> None:
