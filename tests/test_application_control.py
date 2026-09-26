@@ -1081,6 +1081,32 @@ def test_process_matches_by_executable_path():
     )
 
 
+def test_process_matches_modern_windows_app_by_display_metadata():
+    application = ResolvedApplication(
+        name="Calcolatrice",
+        target=r"C:\Windows\SystemApps\CalculatorApp.lnk",
+        source="start_menu",
+    )
+
+    process = {
+        "pid": 100,
+        "name": "CalculatorApp",
+        "path": (
+            r"C:\Program Files\WindowsApps"
+            r"\Microsoft.WindowsCalculator\CalculatorApp.exe"
+        ),
+        "description": "Windows Calculator",
+        "product": "Windows Calculator",
+        "main_window_title": "Calcolatrice",
+    }
+
+    assert OpenApplicationTool._process_matches(
+        process=process,
+        expected_names={"calcolatrice"},
+        application=application,
+    )
+
+
 def test_process_does_not_match_unrelated_process():
     application = ResolvedApplication(
         name="Discord",
