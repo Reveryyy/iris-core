@@ -1025,9 +1025,9 @@ class AgentPlanner:
             # più utile per riferimenti come "il file di test". I risultati
             # del filesystem sono comunque la fonte di verità.
             return (
+                untracked_hit,
                 token_hits,
                 adjacency_hits + prefix_hit,
-                untracked_hit,
                 created_at,
                 modified_at,
                 len(name),
