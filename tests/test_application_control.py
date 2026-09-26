@@ -676,6 +676,75 @@ def test_open_application_launches_and_verifies_resolved_application(
     ] is False
 
 
+def test_open_application_verifies_modern_windows_app_from_discovered_metadata(
+    monkeypatch,
+):
+    application = ResolvedApplication(
+        name="Calcolatrice",
+        target="Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+        source="windows_start_apps",
+        app_id="Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+    )
+
+    tool = OpenApplicationTool(
+        resolver=FakeResolver(application)
+    )
+
+    processes_before = [
+        {
+            "pid": 100,
+            "name": "explorer",
+            "path": r"C:\Windows\explorer.exe",
+            "description": "Windows Explorer",
+            "product": "Microsoft Windows",
+            "main_window_title": "",
+        }
+    ]
+
+    processes_after = processes_before + [
+        {
+            "pid": 200,
+            "name": "CalculatorApp",
+            "path": None,
+            "description": "Windows Calculator",
+            "product": "Windows Calculator",
+            "main_window_title": "Calcolatrice",
+        }
+    ]
+
+    calls = 0
+
+    def discover_processes():
+        nonlocal calls
+        calls += 1
+
+        if calls == 1:
+            return processes_before
+
+        return processes_after
+
+    monkeypatch.setattr(
+        tool,
+        "_discover_processes",
+        discover_processes,
+    )
+    monkeypatch.setattr(
+        tool,
+        "_launch",
+        lambda resolved: 999,
+    )
+
+    result = tool.execute(
+        {"name": "Calcolatrice"}
+    )
+
+    assert result.success is True
+    assert result.output is not None
+    assert result.output["verified_pid"] == 200
+    assert result.output["verified_process_name"] == "CalculatorApp"
+    assert result.output["already_running"] is False
+
+
 def test_open_application_fails_when_process_cannot_be_verified(
     monkeypatch,
 ):
