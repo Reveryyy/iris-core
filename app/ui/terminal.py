@@ -400,10 +400,15 @@ class TerminalUI:
         @bindings.add("pageup")
         def _transcript_page_up(event) -> None:
             with self._state_lock:
+                max_scroll = self._get_transcript_max_scroll()
+
                 if self._transcript_scroll_position is None:
-                    current = 10**9
+                    current = max_scroll
                 else:
-                    current = self._transcript_scroll_position
+                    current = min(
+                        self._transcript_scroll_position,
+                        max_scroll,
+                    )
 
                 step = max(
                     1,
@@ -423,22 +428,31 @@ class TerminalUI:
                 if self._transcript_scroll_position is None:
                     return
 
+                max_scroll = self._get_transcript_max_scroll()
                 step = max(
                     1,
                     self._get_transcript_available_rows() - 2,
                 )
 
-                self._transcript_scroll_position += step
+                self._transcript_scroll_position = min(
+                    max_scroll,
+                    self._transcript_scroll_position + step,
+                )
 
             event.app.invalidate()
 
         @bindings.add(Keys.ScrollUp)
         def _transcript_mouse_scroll_up(event) -> None:
             with self._state_lock:
+                max_scroll = self._get_transcript_max_scroll()
+
                 if self._transcript_scroll_position is None:
-                    current = 10**9
+                    current = max_scroll
                 else:
-                    current = self._transcript_scroll_position
+                    current = min(
+                        self._transcript_scroll_position,
+                        max_scroll,
+                    )
 
                 self._transcript_scroll_position = max(
                     0,
@@ -453,7 +467,12 @@ class TerminalUI:
                 if self._transcript_scroll_position is None:
                     return
 
-                self._transcript_scroll_position += 3
+                max_scroll = self._get_transcript_max_scroll()
+
+                self._transcript_scroll_position = min(
+                    max_scroll,
+                    self._transcript_scroll_position + 3,
+                )
 
             event.app.invalidate()
 
@@ -1186,6 +1205,46 @@ class TerminalUI:
     # ========================================================================
     # TRANSCRIPT VIEWPORT
     # ========================================================================
+
+    def _get_transcript_max_scroll(self) -> int:
+        """
+        Calcola l'offset massimo reale del transcript.
+
+        Quando il transcript è più grande del viewport, l'offset zero
+        corrisponde all'inizio e il valore massimo corrisponde alla coda.
+        """
+        with self._state_lock:
+            transcript = list(
+                self.transcript
+            )
+            busy = self._busy
+
+        if not transcript and not busy:
+            return 0
+
+        available_rows = self._get_transcript_available_rows()
+        available_width = self._get_transcript_available_width()
+
+        content_rows = sum(
+            self._estimate_transcript_item_rows(
+                item=item,
+                width=available_width,
+            )
+            for item in transcript
+        )
+
+        if len(transcript) > 1:
+            content_rows += 2 * (
+                len(transcript) - 1
+            )
+
+        if busy:
+            content_rows += 4
+
+        return max(
+            0,
+            content_rows - available_rows,
+        )
 
     def _get_visible_transcript_items(
         self,
