@@ -881,10 +881,15 @@ class OpenApplicationTool(Tool):
                 process
                 for process
                 in processes_after
-                if self._process_matches(
-                    process=process,
-                    expected_names=expected_names,
-                    application=application,
+                if (
+                    self._process_matches(
+                        process=process,
+                        expected_names=expected_names,
+                        application=application,
+                    )
+                    and self._process_has_main_window(
+                        process
+                    )
                 )
             ]
 
