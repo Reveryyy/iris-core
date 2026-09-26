@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from pathlib import PurePosixPath, PureWindowsPath
 from uuid import uuid4
 from dataclasses import dataclass
 from typing import Any
@@ -215,6 +216,7 @@ class AgentPlanner:
             goal=goal,
             tool_definitions=available_tools,
             context=context,
+            observations=observations,
         )
 
         if reference_copy_plan is not None:
@@ -620,6 +622,7 @@ class AgentPlanner:
         goal: str,
         tool_definitions: list[dict[str, Any]],
         context: str | None,
+        observations: list[AgentObservation] | None = None,
     ) -> AgentPlan | None:
         """Gestisce copie verso una nuova posizione quando la destinazione è generica."""
         if not context:
@@ -1077,6 +1080,13 @@ class AgentPlanner:
             return None
 
         source = self._extract_recent_file(context)
+
+        if source is None:
+            source = self._extract_file_from_observations(
+                observations=observations,
+                goal=normalized,
+            )
+
         destination_root = self._extract_project_directory(context)
 
         if destination_root is None:
@@ -1253,6 +1263,38 @@ class AgentPlanner:
         )
 
     @staticmethod
+    def _join_observed_path(
+        parent: str,
+        name: str,
+    ) -> str:
+        """
+        Unisce un nome a un percorso già osservato preservandone il formato.
+
+        I test e i contesti sintetici possono contenere sia percorsi Windows
+        sia percorsi POSIX. Non convertiamo mai un percorso osservato POSIX
+        in un percorso Windows solo perché IRIS è in esecuzione su Windows.
+        """
+        if parent.startswith("/"):
+            return str(
+                PurePosixPath(parent) / name
+            )
+
+        if (
+            re.match(
+                r"^[A-Za-z]:[\\/]",
+                parent,
+            )
+            or parent.startswith("\\")
+        ):
+            return str(
+                PureWindowsPath(parent) / name
+            )
+
+        return str(
+            Path(parent) / name
+        )
+
+    @staticmethod
     def _extract_project_directory(context: str) -> str | None:
         prefixes = (
             "- RADICE GIT DEL PROGETTO: ",
@@ -1316,7 +1358,7 @@ class AgentPlanner:
             return None
 
         filename_match = re.search(
-            r"(?:file|un file)\s+(?:chiamato|denominato|di nome)\s+[\"']?([^\"'.,;]+)",
+            r"(?:file|un file)\s+(?:chiamato|denominato|di nome)\s+[\"']?([^\"'.,;\s]*(?:\.[^\"'.,;\s]+)?)[\"']?",
             goal,
             flags=re.IGNORECASE,
         )
@@ -1342,7 +1384,10 @@ class AgentPlanner:
             else "Testo creato da IRIS."
         )
 
-        path = str(Path(directory) / filename)
+        path = self._join_observed_path(
+            directory,
+            filename,
+        )
 
         return AgentPlan(
             goal=goal,
