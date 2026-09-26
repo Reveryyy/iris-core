@@ -396,6 +396,55 @@ def test_candidate_sort_prefers_shorter_name_for_same_source():
 # OPEN APPLICATION TOOL
 # ============================================================================
 
+def test_open_application_process_discovery_preserves_verification_metadata(
+    monkeypatch,
+):
+    application = ResolvedApplication(
+        name="Calcolatrice",
+        target="CalculatorApp.exe",
+        source="path",
+    )
+
+    tool = OpenApplicationTool(
+        resolver=FakeResolver(application)
+    )
+
+    powershell_result = type(
+        "Completed",
+        (),
+        {
+            "returncode": 0,
+            "stderr": "",
+            "stdout": (
+                '{"Id":123,"ProcessName":"CalculatorApp",'
+                '"Path":"C:\\\\Windows\\\\SystemApps\\\\CalculatorApp.exe",'
+                '"Description":"Windows Calculator",'
+                '"Product":"Windows Calculator",'
+                '"MainWindowTitle":"Calcolatrice"}'
+            ),
+        },
+    )()
+
+    monkeypatch.setattr(
+        "app.tools.pc.subprocess.run",
+        lambda *args, **kwargs: powershell_result,
+    )
+
+    processes = tool._discover_processes()
+
+    assert processes == [
+        {
+            "pid": 123,
+            "name": "CalculatorApp",
+            "path": r"C:\Windows\SystemApps\CalculatorApp.exe",
+            "description": "Windows Calculator",
+            "product": "Windows Calculator",
+            "main_window_title": "Calcolatrice",
+        }
+    ]
+
+
+
 
 class FakeResolver:
     def __init__(
