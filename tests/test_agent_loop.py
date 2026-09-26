@@ -12,6 +12,7 @@ from app.agent import (
     AgentPlanStep,
     AgentVerifier,
 )
+from app.tools.call import ToolCall
 from app.tools import (
     EchoTool,
     PermissionManager,
@@ -457,7 +458,7 @@ def test_agent_loop_final_message_prefers_tool_user_message_over_planner_message
 
     step = AgentStepResult(
         step=plan.steps[0],
-        tool_call=__import__("app.tools.call", fromlist=["ToolCall"]).ToolCall(
+        tool_call=ToolCall(
             name="open_application",
             arguments={"name": "Calcolatrice"},
             call_id="test",
