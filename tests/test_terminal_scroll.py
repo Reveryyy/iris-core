@@ -1,8 +1,6 @@
 from threading import RLock
 
 from prompt_toolkit.data_structures import Point
-from prompt_toolkit.layout import ScrollablePane, Window
-from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.mouse_events import MouseButton, MouseEvent, MouseEventType
 
 from app.ui.terminal import TerminalUI, TranscriptItem, TranscriptTextControl
@@ -10,6 +8,7 @@ from app.ui.terminal import TerminalUI, TranscriptItem, TranscriptTextControl
 
 def _make_terminal() -> TerminalUI:
     terminal = TerminalUI.__new__(TerminalUI)
+
     terminal._state_lock = RLock()
     terminal.transcript = [
         TranscriptItem(
@@ -22,17 +21,23 @@ def _make_terminal() -> TerminalUI:
     terminal._busy = False
     terminal._application = None
     terminal._live_activity_text = lambda: []
-    terminal._transcript_pane = ScrollablePane(
-        Window(
-            content=FormattedTextControl(""),
-        ),
-        keep_cursor_visible=False,
-        keep_focused_window_visible=False,
-        show_scrollbar=False,
-        display_arrows=False,
-    )
     terminal._invalidate = lambda: None
+
     return terminal
+
+
+def test_transcript_renders_complete_history():
+    terminal = _make_terminal()
+
+    rendered = terminal._transcript_text()
+
+    plain = "".join(
+        fragment[1]
+        for fragment in rendered
+    )
+
+    assert "messaggio" in plain
+    assert len(plain) > 100
 
 
 def test_transcript_max_scroll_is_positive_for_long_history():
@@ -41,23 +46,41 @@ def test_transcript_max_scroll_is_positive_for_long_history():
     assert terminal._get_transcript_max_scroll() > 0
 
 
-def test_transcript_before_render_follows_bottom_and_preserves_manual_position():
+def test_transcript_cursor_follows_bottom_when_not_manually_scrolled():
     terminal = _make_terminal()
 
-    terminal._transcript_scroll_position = None
-    terminal._before_render(None)
+    control = TranscriptTextControl(
+        terminal,
+        terminal._transcript_text,
+    )
 
-    assert terminal._transcript_pane.vertical_scroll == 10**9
+    content = control.create_content(
+        width=80,
+        height=12,
+    )
 
-    terminal._transcript_scroll_position = 7
-    terminal._before_render(None)
-
-    assert terminal._transcript_pane.vertical_scroll == 7
+    assert content.cursor_position.y == content.line_count - 1
 
 
-def test_transcript_mouse_scroll_up_moves_from_bottom():
+def test_transcript_cursor_tracks_manual_scroll_position():
     terminal = _make_terminal()
-    terminal._transcript_pane.vertical_scroll = 30
+    terminal._transcript_scroll_position = 5
+
+    control = TranscriptTextControl(
+        terminal,
+        terminal._transcript_text,
+    )
+
+    content = control.create_content(
+        width=80,
+        height=12,
+    )
+
+    assert content.cursor_position.y >= 5
+
+
+def test_transcript_mouse_scroll_up_enters_manual_mode():
+    terminal = _make_terminal()
 
     control = TranscriptTextControl(
         terminal,
@@ -74,10 +97,13 @@ def test_transcript_mouse_scroll_up_moves_from_bottom():
     control.mouse_handler(event)
 
     assert terminal._transcript_scroll_position is not None
-    assert terminal._transcript_scroll_position < terminal._get_transcript_max_scroll()
+    assert (
+        terminal._transcript_scroll_position
+        < terminal._get_transcript_max_scroll()
+    )
 
 
-def test_transcript_mouse_scroll_down_returns_toward_bottom():
+def test_transcript_mouse_scroll_down_moves_toward_bottom():
     terminal = _make_terminal()
     terminal._transcript_scroll_position = 0
 
@@ -96,7 +122,6 @@ def test_transcript_mouse_scroll_down_returns_toward_bottom():
     control.mouse_handler(event)
 
     assert terminal._transcript_scroll_position == 3
-    assert terminal._transcript_pane.vertical_scroll == 3
 
 
 def test_transcript_new_message_resets_to_follow_bottom():
