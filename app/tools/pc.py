@@ -681,7 +681,7 @@ class OpenApplicationTool(Tool):
             "-Command",
             (
                 "Get-Process | "
-                "Select-Object Id,ProcessName,Path,Description,Product,MainWindowTitle,MainWindowHandle | "
+                "Select-Object Id,ProcessName,Path | "
                 "ConvertTo-Json -Compress"
             ),
         ]
@@ -755,22 +755,6 @@ class OpenApplicationTool(Tool):
                 "Path"
             )
 
-            description = item.get(
-                "Description"
-            )
-
-            product = item.get(
-                "Product"
-            )
-
-            main_window_title = item.get(
-                "MainWindowTitle"
-            )
-
-            main_window_handle = item.get(
-                "MainWindowHandle"
-            )
-
             if not isinstance(
                 pid,
                 int,
@@ -794,38 +778,6 @@ class OpenApplicationTool(Tool):
                             str,
                         )
                         else None
-                    ),
-                    "description": (
-                        description
-                        if isinstance(
-                            description,
-                            str,
-                        )
-                        else None
-                    ),
-                    "product": (
-                        product
-                        if isinstance(
-                            product,
-                            str,
-                        )
-                        else None
-                    ),
-                    "main_window_title": (
-                        main_window_title
-                        if isinstance(
-                            main_window_title,
-                            str,
-                        )
-                        else None
-                    ),
-                    "main_window_handle": (
-                        main_window_handle
-                        if isinstance(
-                            main_window_handle,
-                            int,
-                        )
-                        else 0
                     ),
                 }
             )
