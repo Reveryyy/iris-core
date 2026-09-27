@@ -396,7 +396,7 @@ def test_candidate_sort_prefers_shorter_name_for_same_source():
 # OPEN APPLICATION TOOL
 # ============================================================================
 
-def test_open_application_process_discovery_preserves_verification_metadata(
+def test_open_application_process_discovery_keeps_core_process_fields(
     monkeypatch,
 ):
     application = ResolvedApplication(
@@ -417,10 +417,7 @@ def test_open_application_process_discovery_preserves_verification_metadata(
             "stderr": "",
             "stdout": (
                 '{"Id":123,"ProcessName":"CalculatorApp",'
-                '"Path":"C:\\Windows\\SystemApps\\CalculatorApp.exe",'
-                '"Description":"Windows Calculator",'
-                '"Product":"Windows Calculator",'
-                '"MainWindowTitle":"Calcolatrice"}'
+                '"Path":"C:\\Windows\\SystemApps\\CalculatorApp.exe"}'
             ),
         },
     )()
@@ -437,13 +434,8 @@ def test_open_application_process_discovery_preserves_verification_metadata(
             "pid": 123,
             "name": "CalculatorApp",
             "path": r"C:\Windows\SystemApps\CalculatorApp.exe",
-            "description": "Windows Calculator",
-            "product": "Windows Calculator",
-            "main_window_title": "Calcolatrice",
-            "main_window_handle": 0,
         }
     ]
-
 
 
 
