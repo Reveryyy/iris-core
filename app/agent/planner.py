@@ -557,6 +557,14 @@ class AgentPlanner:
         if file_plan is not None:
             return file_plan
 
+        process_plan = self._build_process_discovery_fallback(
+            goal=goal,
+            tool_definitions=tool_definitions,
+        )
+
+        if process_plan is not None:
+            return process_plan
+
         tool_names = {
             str(
                 definition.get(
@@ -612,6 +620,87 @@ class AgentPlanner:
             goal=goal,
             steps=tuple(
                 steps
+            ),
+            decision=AgentDecision.DONE,
+            message=None,
+        )
+
+    def _build_process_discovery_fallback(
+        self,
+        goal: str,
+        tool_definitions: list[dict[str, Any]],
+    ) -> AgentPlan | None:
+        """
+        Gestisce richieste informative semplici sui processi in esecuzione.
+
+        Il fallback viene usato solo quando il goal è chiaramente una
+        richiesta di discovery e il tool list_processes è realmente
+        disponibile.
+        """
+        tool_names = {
+            str(definition.get("name"))
+            for definition in tool_definitions
+            if isinstance(definition, dict)
+        }
+
+        if "list_processes" not in tool_names:
+            return None
+
+        normalized = re.sub(
+            r"^\s*/agent\s+",
+            "",
+            goal.strip(),
+            flags=re.IGNORECASE,
+        ).casefold()
+
+        discovery_markers = (
+            "dimmi",
+            "quali",
+            "mostra",
+            "elenca",
+            "lista",
+            "quali sono",
+            "fammi vedere",
+        )
+
+        mutation_markers = (
+            "chiudi",
+            "termina",
+            "uccidi",
+            "ferma",
+            "avvia",
+            "apri",
+            "esegui",
+            "riavvia",
+        )
+
+        if "processi" not in normalized:
+            return None
+
+        if not any(
+            marker in normalized
+            for marker in discovery_markers
+        ):
+            return None
+
+        if any(
+            marker in normalized
+            for marker in mutation_markers
+        ):
+            return None
+
+        return AgentPlan(
+            goal=goal,
+            steps=(
+                AgentPlanStep(
+                    tool_name="list_processes",
+                    arguments={},
+                    description="Elenca i processi attualmente in esecuzione.",
+                    success_criteria=(
+                        "Il tool deve restituire l'elenco dei processi "
+                        "attualmente rilevati dal sistema."
+                    ),
+                ),
             ),
             decision=AgentDecision.DONE,
             message=None,
