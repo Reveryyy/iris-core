@@ -187,3 +187,35 @@ def test_planner_process_discovery_fallback_runs_before_llm():
 
     assert plan.steps[0].tool_name == "list_processes"
     assert plan.steps[0].arguments == {}
+
+
+def test_parse_powershell_processes_accepts_minimal_utf8_json():
+    tool = ListProcessesTool()
+
+    raw = (
+        '[{"Id":101,"ProcessName":"chrome","Path":"'
+        'C:\\\\Program Files\\\\Google\\\\chrome.exe"},'
+        '{"Id":202,"ProcessName":"Telegram","Path":null}]'
+    )
+
+    parsed = tool._parse_powershell_processes(raw)
+
+    assert [
+        {
+            "pid": process.pid,
+            "name": process.name,
+            "executable": process.executable,
+        }
+        for process in parsed
+    ] == [
+        {
+            "pid": 101,
+            "name": "chrome",
+            "executable": r"C:\Program Files\Google\chrome.exe",
+        },
+        {
+            "pid": 202,
+            "name": "Telegram",
+            "executable": None,
+        },
+    ]
