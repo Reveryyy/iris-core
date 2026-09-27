@@ -118,3 +118,45 @@ def test_discovery_tools_reject_unexpected_arguments() -> None:
         )
 
         assert result.success is False
+
+
+def test_planner_falls_back_to_list_processes_for_process_discovery():
+    from app.agent.planner import AgentDecision, AgentPlanner
+
+    planner = AgentPlanner(
+        router=None,
+    )
+
+    plan = planner._build_process_discovery_fallback(
+        goal="/agent dimmi quali processi sono in esecuzione",
+        tool_definitions=[
+            {
+                "name": "list_processes",
+            }
+        ],
+    )
+
+    assert plan is not None
+    assert plan.decision == AgentDecision.DONE
+    assert len(plan.steps) == 1
+    assert plan.steps[0].tool_name == "list_processes"
+    assert plan.steps[0].arguments == {}
+
+
+def test_planner_process_fallback_does_not_capture_mutating_requests():
+    from app.agent.planner import AgentPlanner
+
+    planner = AgentPlanner(
+        router=None,
+    )
+
+    plan = planner._build_process_discovery_fallback(
+        goal="/agent chiudi il processo Discord",
+        tool_definitions=[
+            {
+                "name": "list_processes",
+            }
+        ],
+    )
+
+    assert plan is None
