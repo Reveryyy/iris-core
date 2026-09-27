@@ -1089,6 +1089,48 @@ class AgentLoop:
                 + content
             )
 
+        windows = output.get(
+            "windows"
+        )
+
+        if isinstance(
+            windows,
+            list,
+        ):
+            user_windows = [
+                window
+                for window in windows
+                if (
+                    isinstance(window, dict)
+                    and isinstance(window.get("title"), str)
+                    and window.get("title").strip()
+                )
+            ]
+
+            if not user_windows:
+                return "Non ho rilevato finestre di applicazioni con titolo."
+
+            visible_parts: list[str] = []
+
+            for window in user_windows:
+                title = window["title"].strip()
+                suffix = ""
+
+                if window.get("foreground"):
+                    suffix = " (in primo piano)"
+                elif window.get("minimized"):
+                    suffix = " (minimizzata)"
+
+                visible_parts.append(
+                    f"- {title}{suffix}"
+                )
+
+            return (
+                f"Ho rilevato {len(user_windows)} "
+                f"finestre di applicazioni con titolo aperte:\n"
+                + "\n".join(visible_parts)
+            )
+
         entries = output.get(
             "entries"
         )
@@ -1172,6 +1214,69 @@ class AgentLoop:
                 return "\n\n".join(
                     parts
                 )
+
+        processes = output.get(
+            "processes"
+        )
+
+        if isinstance(
+            processes,
+            list,
+        ):
+            names: dict[str, int] = {}
+
+            for process in processes:
+                if not isinstance(process, dict):
+                    continue
+
+                name = process.get("name")
+
+                if not isinstance(name, str) or not name.strip():
+                    continue
+
+                normalized_name = name.strip()
+
+                names[normalized_name] = (
+                    names.get(normalized_name, 0) + 1
+                )
+
+            if not names:
+                return "Non ho rilevato processi in esecuzione."
+
+            ordered = sorted(
+                names.items(),
+                key=lambda item: (
+                    -item[1],
+                    item[0].casefold(),
+                ),
+            )
+
+            shown = ordered[:15]
+            parts = []
+
+            for name, count in shown:
+                if count == 1:
+                    parts.append(name)
+                else:
+                    parts.append(
+                        f"{name} ({count} istanze)"
+                    )
+
+            total = len(processes)
+            distinct = len(ordered)
+
+            message = (
+                f"Ho rilevato {total} processi in esecuzione.\n"
+                "Principali processi rilevati: "
+                + ", ".join(parts)
+            )
+
+            if distinct > len(shown):
+                message += (
+                    f", e altri {distinct - len(shown)} tipi di processo."
+                )
+
+            return message
 
         informative_keys = (
             "commands",
