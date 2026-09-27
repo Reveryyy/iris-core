@@ -173,3 +173,33 @@ def test_agent_output_formatter_exposes_discovered_applications():
     assert rendered is not None
     assert "Blocco Note" in rendered
     assert "notepad.exe" in rendered
+
+
+def test_terminal_copy_preserves_unicode_text_on_windows(
+    monkeypatch,
+):
+    terminal = TerminalUI.__new__(TerminalUI)
+
+    terminal._state_lock = RLock()
+    terminal.transcript = [
+        TranscriptItem(
+            kind="iris",
+            text="Risposta con freccia → e carattere ✓",
+            status="done",
+        ),
+    ]
+    terminal._append_system = lambda message: None
+
+    copied = []
+
+    monkeypatch.setattr(
+        terminal,
+        "_copy_windows_unicode_clipboard",
+        lambda text: copied.append(text),
+    )
+
+    terminal._copy_transcript_to_clipboard()
+
+    assert len(copied) == 1
+    assert "→" in copied[0]
+    assert "✓" in copied[0]
