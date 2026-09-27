@@ -803,6 +803,168 @@ def test_open_application_fails_when_process_cannot_be_verified(
     )
 
 
+def test_open_application_detects_visible_modern_app_window_after_launch(
+    monkeypatch,
+):
+    application = ResolvedApplication(
+        name="Calcolatrice",
+        target="Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+        source="windows_start_apps",
+        app_id="Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+    )
+
+    tool = OpenApplicationTool(
+        resolver=FakeResolver(application),
+        verification_timeout=0.05,
+        verification_interval=0.01,
+    )
+
+    processes_before = [
+        {
+            "pid": 777,
+            "name": "CalculatorApp",
+            "path": None,
+            "description": "Windows Calculator",
+            "product": "Windows Calculator",
+            "main_window_title": "",
+            "main_window_handle": 0,
+        }
+    ]
+
+    processes_after = [
+        *processes_before,
+        {
+            "pid": 888,
+            "name": "ApplicationFrameHost",
+            "path": r"C:\Windows\System32\ApplicationFrameHost.exe",
+            "description": "Application Frame Host",
+            "product": "Microsoft Windows",
+            "main_window_title": "Calcolatrice",
+            "main_window_handle": 1234,
+        },
+    ]
+
+    calls = 0
+
+    def discover_processes():
+        nonlocal calls
+        calls += 1
+
+        if calls == 1:
+            return processes_before
+
+        return processes_after
+
+    monkeypatch.setattr(
+        tool,
+        "_discover_processes",
+        discover_processes,
+    )
+    monkeypatch.setattr(
+        tool,
+        "_launch",
+        lambda resolved: 999,
+    )
+    monkeypatch.setattr(
+        tool,
+        "_find_visible_application_window",
+        lambda resolved: {
+            "pid": 888,
+            "name": "ApplicationFrameHost",
+            "path": r"C:\Windows\System32\ApplicationFrameHost.exe",
+            "description": "Application Frame Host",
+            "product": "Microsoft Windows",
+            "main_window_title": "Calcolatrice",
+            "main_window_handle": 1234,
+        },
+    )
+
+    result = tool.execute(
+        {"name": "Calcolatrice"}
+    )
+
+    assert result.success is True
+    assert result.output is not None
+    assert result.output["verified_pid"] == 888
+    assert result.output["verified_process_name"] == "ApplicationFrameHost"
+    assert result.output["already_running"] is False
+
+
+def test_open_application_detects_visible_app_window_without_matching_process_pid(
+    monkeypatch,
+):
+    application = ResolvedApplication(
+        name="Calcolatrice",
+        target="Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+        source="windows_start_apps",
+        app_id="Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+    )
+
+    tool = OpenApplicationTool(
+        resolver=FakeResolver(application)
+    )
+
+    processes = [
+        {
+            "pid": 777,
+            "name": "CalculatorApp",
+            "path": None,
+            "description": "Windows Calculator",
+            "product": "Windows Calculator",
+            "main_window_title": "",
+            "main_window_handle": 0,
+        }
+    ]
+
+    monkeypatch.setattr(
+        tool,
+        "_discover_processes",
+        lambda: processes,
+    )
+    monkeypatch.setattr(
+        OpenApplicationTool,
+        "_process_has_visible_window",
+        staticmethod(lambda pid: False),
+    )
+    monkeypatch.setattr(
+        tool,
+        "_find_visible_application_window",
+        lambda resolved: {
+            "pid": 888,
+            "name": "ApplicationFrameHost",
+            "path": r"C:\Windows\System32\ApplicationFrameHost.exe",
+            "description": "Application Frame Host",
+            "product": "Microsoft Windows",
+            "main_window_title": "Calcolatrice",
+            "main_window_handle": 1234,
+        },
+    )
+
+    launch_called = False
+
+    def fake_launch(resolved):
+        nonlocal launch_called
+        launch_called = True
+        return 999
+
+    monkeypatch.setattr(
+        tool,
+        "_launch",
+        fake_launch,
+    )
+
+    result = tool.execute(
+        {"name": "Calcolatrice"}
+    )
+
+    assert result.success is True
+    assert result.output is not None
+    assert result.output["verified_pid"] == 888
+    assert result.output["already_running"] is True
+    assert result.output["launch_pid"] is None
+    assert launch_called is False
+
+
 def test_open_application_does_not_treat_background_process_as_already_running(
     monkeypatch,
 ):
