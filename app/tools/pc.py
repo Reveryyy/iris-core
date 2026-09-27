@@ -676,7 +676,7 @@ class OpenApplicationTool(Tool):
             "-Command",
             (
                 "Get-Process | "
-                "Select-Object Id,ProcessName,Path,Description,Product,MainWindowTitle | "
+                "Select-Object Id,ProcessName,Path,Description,Product,MainWindowTitle,MainWindowHandle | "
                 "ConvertTo-Json -Compress"
             ),
         ]
@@ -1029,29 +1029,115 @@ class OpenApplicationTool(Tool):
     def _process_has_main_window(
         process: dict[str, Any],
     ) -> bool:
-        handle = process.get(
-            "main_window_handle"
+        pid = process.get(
+            "pid"
         )
 
-        if isinstance(
-            handle,
+        if not isinstance(
+            pid,
             int,
-        ) and handle > 0:
-            return True
+        ) or pid <= 0:
+            return False
 
-        title = process.get(
-            "main_window_title"
+        if os.name != "nt":
+            return False
+
+        return OpenApplicationTool._process_has_visible_window(
+            pid
         )
 
-        return (
-            isinstance(
-                title,
-                str,
+    @staticmethod
+    def _process_has_visible_window(
+        pid: int,
+    ) -> bool:
+        """
+        Verifica tramite Win32 se il processo possiede almeno una finestra
+        top-level attualmente visibile.
+
+        Non usiamo il titolo della finestra come indicatore: un processo
+        Windows può avere un MainWindowTitle anche quando non presenta
+        una finestra realmente visibile all'utente.
+        """
+
+        if os.name != "nt":
+            return False
+
+        try:
+            import ctypes
+
+            user32 = ctypes.windll.user32
+            enum_windows = user32.EnumWindows
+            is_window_visible = user32.IsWindowVisible
+            get_window_thread_process_id = (
+                user32.GetWindowThreadProcessId
             )
-            and bool(
-                title.strip()
+
+            enum_windows.argtypes = [
+                ctypes.WINFUNCTYPE(
+                    ctypes.c_bool,
+                    ctypes.c_void_p,
+                    ctypes.c_void_p,
+                ),
+                ctypes.c_void_p,
+            ]
+            enum_windows.restype = ctypes.c_bool
+
+            is_window_visible.argtypes = [
+                ctypes.c_void_p,
+            ]
+            is_window_visible.restype = ctypes.c_bool
+
+            get_window_thread_process_id.argtypes = [
+                ctypes.c_void_p,
+                ctypes.POINTER(ctypes.c_ulong),
+            ]
+            get_window_thread_process_id.restype = ctypes.c_ulong
+
+            found = False
+
+            @ctypes.WINFUNCTYPE(
+                ctypes.c_bool,
+                ctypes.c_void_p,
+                ctypes.c_void_p,
             )
-        )
+            def callback(
+                hwnd,
+                _lparam,
+            ):
+                nonlocal found
+
+                if not is_window_visible(
+                    hwnd
+                ):
+                    return True
+
+                owner_pid = ctypes.c_ulong()
+
+                get_window_thread_process_id(
+                    hwnd,
+                    ctypes.byref(
+                        owner_pid
+                    ),
+                )
+
+                if owner_pid.value == pid:
+                    found = True
+                    return False
+
+                return True
+
+            enum_windows(
+                callback,
+                0,
+            )
+
+            return found
+
+        except (
+            AttributeError,
+            OSError,
+        ):
+            return False
 
     @staticmethod
     def _process_matches(
