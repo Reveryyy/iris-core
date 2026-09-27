@@ -881,6 +881,12 @@ def test_open_application_accepts_preexisting_matching_process(
         }
     ]
 
+    monkeypatch.setattr(
+        OpenApplicationTool,
+        "_process_has_visible_window",
+        staticmethod(lambda pid: pid == 555),
+    )
+
     launch_called = False
 
     def fake_launch(
@@ -1208,6 +1214,56 @@ def test_open_application_normalizes_process_names():
             "Windows_Terminal"
         )
         == "windowsterminal"
+    )
+
+
+def test_process_with_stale_title_is_not_considered_visible(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        OpenApplicationTool,
+        "_process_has_visible_window",
+        staticmethod(lambda pid: False),
+    )
+
+    process = {
+        "pid": 777,
+        "name": "CalculatorApp",
+        "path": r"C:\Windows\SystemApps\CalculatorApp.exe",
+        "main_window_title": "Calcolatrice",
+        "main_window_handle": 0,
+    }
+
+    assert (
+        OpenApplicationTool._process_has_main_window(
+            process
+        )
+        is False
+    )
+
+
+def test_process_with_visible_window_is_considered_visible(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        OpenApplicationTool,
+        "_process_has_visible_window",
+        staticmethod(lambda pid: pid == 888),
+    )
+
+    process = {
+        "pid": 888,
+        "name": "CalculatorApp",
+        "path": r"C:\Windows\SystemApps\CalculatorApp.exe",
+        "main_window_title": "Calcolatrice",
+        "main_window_handle": 1234,
+    }
+
+    assert (
+        OpenApplicationTool._process_has_main_window(
+            process
+        )
+        is True
     )
 
 
