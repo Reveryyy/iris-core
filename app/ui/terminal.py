@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shlex
 import subprocess
 import textwrap
@@ -2173,19 +2174,24 @@ class TerminalUI:
             return
 
         try:
-            subprocess.run(
-                ["clip"],
-                input=text,
-                text=True,
-                check=True,
-                creationflags=(
-                    getattr(
-                        subprocess,
-                        "CREATE_NO_WINDOW",
-                        0,
-                    )
-                ),
-            )
+            if os.name == "nt":
+                self._copy_windows_unicode_clipboard(
+                    text
+                )
+            else:
+                subprocess.run(
+                    ["clip"],
+                    input=text,
+                    text=True,
+                    check=True,
+                    creationflags=(
+                        getattr(
+                            subprocess,
+                            "CREATE_NO_WINDOW",
+                            0,
+                        )
+                    ),
+                )
 
             self._append_system(
                 "Conversazione copiata negli appunti."
@@ -2193,11 +2199,140 @@ class TerminalUI:
 
         except (
             OSError,
+            MemoryError,
             subprocess.SubprocessError,
         ) as error:
             self._append_system(
                 f"Impossibile copiare la conversazione: {error}"
             )
+
+    @staticmethod
+    def _copy_windows_unicode_clipboard(
+        text: str,
+    ) -> None:
+        """
+        Scrive testo Unicode direttamente nella clipboard Win32.
+
+        Evita la code page locale usata da subprocess/clip.exe, che può
+        fallire quando il transcript contiene caratteri non rappresentabili
+        in CP1252 o in altre code page legacy.
+        """
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+
+        CF_UNICODETEXT = 13
+        GMEM_MOVEABLE = 0x0002
+
+        user32.OpenClipboard.argtypes = [
+            ctypes.c_void_p,
+        ]
+        user32.OpenClipboard.restype = ctypes.c_int
+
+        user32.EmptyClipboard.argtypes = []
+        user32.EmptyClipboard.restype = ctypes.c_int
+
+        user32.SetClipboardData.argtypes = [
+            ctypes.c_uint,
+            ctypes.c_void_p,
+        ]
+        user32.SetClipboardData.restype = ctypes.c_void_p
+
+        user32.CloseClipboard.argtypes = []
+        user32.CloseClipboard.restype = ctypes.c_int
+
+        kernel32.GlobalAlloc.argtypes = [
+            ctypes.c_uint,
+            ctypes.c_size_t,
+        ]
+        kernel32.GlobalAlloc.restype = ctypes.c_void_p
+
+        kernel32.GlobalLock.argtypes = [
+            ctypes.c_void_p,
+        ]
+        kernel32.GlobalLock.restype = ctypes.c_void_p
+
+        kernel32.GlobalUnlock.argtypes = [
+            ctypes.c_void_p,
+        ]
+        kernel32.GlobalUnlock.restype = ctypes.c_int
+
+        kernel32.GlobalFree.argtypes = [
+            ctypes.c_void_p,
+        ]
+        kernel32.GlobalFree.restype = ctypes.c_void_p
+
+        if not user32.OpenClipboard(None):
+            raise OSError(
+                "Impossibile aprire gli appunti di Windows."
+            )
+
+        memory_handle = None
+        clipboard_owns_memory = False
+
+        try:
+            if not user32.EmptyClipboard():
+                raise OSError(
+                    "Impossibile svuotare gli appunti di Windows."
+                )
+
+            encoded = (
+                text + "\\x00"
+            ).encode(
+                "utf-16-le"
+            )
+
+            memory_handle = kernel32.GlobalAlloc(
+                GMEM_MOVEABLE,
+                len(encoded),
+            )
+
+            if not memory_handle:
+                raise MemoryError(
+                    "Impossibile allocare la memoria per gli appunti."
+                )
+
+            locked_memory = kernel32.GlobalLock(
+                memory_handle
+            )
+
+            if not locked_memory:
+                raise OSError(
+                    "Impossibile bloccare la memoria per gli appunti."
+                )
+
+            try:
+                ctypes.memmove(
+                    locked_memory,
+                    encoded,
+                    len(encoded),
+                )
+            finally:
+                kernel32.GlobalUnlock(
+                    memory_handle
+                )
+
+            if not user32.SetClipboardData(
+                CF_UNICODETEXT,
+                memory_handle,
+            ):
+                raise OSError(
+                    "Impossibile trasferire il testo negli appunti di Windows."
+                )
+
+            clipboard_owns_memory = True
+
+        finally:
+            if (
+                memory_handle
+                and not clipboard_owns_memory
+            ):
+                kernel32.GlobalFree(
+                    memory_handle
+                )
+
+            user32.CloseClipboard()
 
     # ========================================================================
     # SYSTEM
