@@ -2278,7 +2278,7 @@ class TerminalUI:
                 )
 
             encoded = (
-                text + "\\x00"
+                text + "\x00"
             ).encode(
                 "utf-16-le"
             )
