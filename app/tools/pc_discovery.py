@@ -295,6 +295,8 @@ class DiscoverPCStateTool(Tool):
             "-NonInteractive",
             "-Command",
             (
+                "[Console]::OutputEncoding = "
+                "[System.Text.Encoding]::UTF8; "
                 "Get-Process | "
                 "Select-Object Id,ProcessName,Path | "
                 "ConvertTo-Json -Compress"
@@ -304,7 +306,7 @@ class DiscoverPCStateTool(Tool):
         completed = subprocess.run(
             command,
             capture_output=True,
-            text=True,
+            text=False,
             timeout=10,
             check=False,
             shell=False,
@@ -316,8 +318,18 @@ class DiscoverPCStateTool(Tool):
                 or "Get-Process ha restituito un errore."
             )
 
+        try:
+            stdout = completed.stdout.decode(
+                "utf-8"
+            )
+        except UnicodeDecodeError as error:
+            raise OSError(
+                "La discovery dei processi ha restituito "
+                "un output non decodificabile in UTF-8."
+            ) from error
+
         return self._parse_powershell_processes(
-            completed.stdout
+            stdout
         )
 
     def _discover_processes_posix(
