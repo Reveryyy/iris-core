@@ -160,3 +160,30 @@ def test_planner_process_fallback_does_not_capture_mutating_requests():
     )
 
     assert plan is None
+
+
+def test_planner_process_discovery_fallback_runs_before_llm():
+    from app.agent.planner import AgentPlanner
+
+    class ExplodingRouter:
+        def generate(self, *args, **kwargs):
+            raise AssertionError(
+                "Il router LLM non deve essere chiamato per una "
+                "richiesta semplice di discovery dei processi."
+            )
+
+    planner = AgentPlanner(
+        router=ExplodingRouter(),
+    )
+
+    plan = planner.plan(
+        goal="/agent dimmi quali processi sono in esecuzione",
+        tool_definitions=[
+            {
+                "name": "list_processes",
+            }
+        ],
+    )
+
+    assert plan.steps[0].tool_name == "list_processes"
+    assert plan.steps[0].arguments == {}
