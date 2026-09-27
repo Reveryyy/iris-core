@@ -203,3 +203,68 @@ def test_terminal_copy_preserves_unicode_text_on_windows(
     assert len(copied) == 1
     assert "→" in copied[0]
     assert "✓" in copied[0]
+
+
+def test_agent_output_formatter_renders_application_windows_without_json():
+    output = {
+        "count": 4,
+        "windows": [
+            {
+                "title": "Google Chrome",
+                "foreground": True,
+                "minimized": False,
+            },
+            {
+                "title": "",
+                "foreground": False,
+                "minimized": False,
+            },
+            {
+                "title": "Telegram",
+                "foreground": False,
+                "minimized": False,
+            },
+            {
+                "title": "Visual Studio Code",
+                "foreground": False,
+                "minimized": True,
+            },
+        ],
+        "user_message": "Ho rilevato 4 finestre visibili sul desktop.",
+    }
+
+    rendered = AgentLoop._format_tool_output_for_user(
+        output
+    )
+
+    assert rendered is not None
+    assert "Google Chrome" in rendered
+    assert "Telegram" in rendered
+    assert "Visual Studio Code" in rendered
+    assert '"hwnd"' not in rendered
+    assert '"windows"' not in rendered
+
+
+def test_agent_output_formatter_renders_processes_without_json():
+    output = {
+        "count": 5,
+        "processes": [
+            {"pid": 1, "name": "chrome", "executable": None},
+            {"pid": 2, "name": "chrome", "executable": None},
+            {"pid": 3, "name": "Telegram", "executable": None},
+            {"pid": 4, "name": "python", "executable": None},
+            {"pid": 5, "name": "python", "executable": None},
+        ],
+        "user_message": "Ho rilevato 5 processi attualmente in esecuzione.",
+    }
+
+    rendered = AgentLoop._format_tool_output_for_user(
+        output
+    )
+
+    assert rendered is not None
+    assert "5 processi" in rendered
+    assert "chrome (2 istanze)" in rendered
+    assert "Telegram" in rendered
+    assert '"pid"' not in rendered
+    assert '"processes"' not in rendered
