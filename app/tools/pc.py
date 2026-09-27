@@ -292,6 +292,11 @@ class OpenApplicationTool(Tool):
             require_visible_window=True,
         )
 
+        if already_running is None:
+            already_running = self._find_visible_application_window(
+                application
+            )
+
         if already_running is not None:
             return ToolResult(
                 success=True,
@@ -900,6 +905,13 @@ class OpenApplicationTool(Tool):
 
                 return existing_candidates[0]
 
+            visible_window = self._find_visible_application_window(
+                application
+            )
+
+            if visible_window is not None:
+                return visible_window
+
             time.sleep(
                 self.verification_interval
             )
@@ -1024,6 +1036,148 @@ class OpenApplicationTool(Tool):
             for name in names
             if name
         }
+
+    @staticmethod
+    def _find_visible_application_window(
+        application,
+    ) -> dict[str, Any] | None:
+        """
+        Cerca una finestra top-level visibile appartenente all'applicazione.
+
+        Le app Windows moderne possono usare ApplicationFrameHost oppure
+        altri processi host per la finestra. In questi casi il PID del
+        processo applicativo non coincide necessariamente con il PID della
+        finestra. Perciò usiamo il titolo della finestra come secondo
+        percorso di verifica, senza dipendere da una allowlist di processi.
+        """
+
+        if os.name != "nt":
+            return None
+
+        application_name = getattr(
+            application,
+            "name",
+            "",
+        )
+
+        if not isinstance(
+            application_name,
+            str,
+        ) or not application_name.strip():
+            return None
+
+        normalized_application = (
+            OpenApplicationTool._normalize_name(
+                application_name
+            )
+        )
+
+        if not normalized_application:
+            return None
+
+        try:
+            import ctypes
+
+            user32 = ctypes.windll.user32
+            is_window_visible = user32.IsWindowVisible
+            get_window_text_length = user32.GetWindowTextLengthW
+            get_window_text = user32.GetWindowTextW
+            get_window_thread_process_id = (
+                user32.GetWindowThreadProcessId
+            )
+            enum_windows = user32.EnumWindows
+
+            callback_type = ctypes.WINFUNCTYPE(
+                ctypes.c_bool,
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+            )
+
+            found: dict[str, Any] | None = None
+
+            @callback_type
+            def callback(
+                hwnd,
+                _lparam,
+            ):
+                nonlocal found
+
+                if not is_window_visible(
+                    hwnd
+                ):
+                    return True
+
+                title_length = get_window_text_length(
+                    hwnd
+                )
+
+                if title_length <= 0:
+                    return True
+
+                buffer = ctypes.create_unicode_buffer(
+                    title_length + 1
+                )
+
+                get_window_text(
+                    hwnd,
+                    buffer,
+                    title_length + 1,
+                )
+
+                title = buffer.value.strip()
+
+                if not title:
+                    return True
+
+                normalized_title = (
+                    OpenApplicationTool._normalize_name(
+                        title
+                    )
+                )
+
+                if (
+                    normalized_application
+                    not in normalized_title
+                ):
+                    return True
+
+                owner_pid = ctypes.c_ulong()
+
+                get_window_thread_process_id(
+                    hwnd,
+                    ctypes.byref(
+                        owner_pid
+                    ),
+                )
+
+                found = {
+                    "pid": int(
+                        owner_pid.value
+                    ),
+                    "name": "",
+                    "path": None,
+                    "description": None,
+                    "product": None,
+                    "main_window_title": title,
+                    "main_window_handle": int(
+                        hwnd
+                    ),
+                }
+
+                return False
+
+            enum_windows(
+                callback,
+                0,
+            )
+
+            return found
+
+        except (
+            AttributeError,
+            OSError,
+        ):
+            return None
 
     @staticmethod
     def _process_has_main_window(
