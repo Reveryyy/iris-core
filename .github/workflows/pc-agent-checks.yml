@@ -33,6 +33,8 @@ jobs:
           tests/test_pc_filesystem.py
           tests/test_pc_filesystem_ops.py
           tests/test_pc_system_discovery.py
+          tests/test_application_control.py
+          tests/test_application_resolver.py
           tests/test_pc_state.py
           tests/test_mouse.py
           tests/test_pc_gui_discovery.py
