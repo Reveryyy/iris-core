@@ -669,7 +669,7 @@ def test_open_application_launches_and_verifies_resolved_application(
     ] is False
 
 
-def test_open_application_verifies_modern_windows_app_from_discovered_metadata(
+def test_open_application_verifies_modern_windows_app_through_host_window(
     monkeypatch,
 ):
     application = ResolvedApplication(
@@ -685,24 +685,19 @@ def test_open_application_verifies_modern_windows_app_from_discovered_metadata(
 
     processes_before = [
         {
-            "pid": 100,
-            "name": "explorer",
-            "path": r"C:\Windows\explorer.exe",
-            "description": "Windows Explorer",
-            "product": "Microsoft Windows",
-            "main_window_title": "",
+            "pid": 777,
+            "name": "CalculatorApp",
+            "path": None,
         }
     ]
 
-    processes_after = processes_before + [
+    processes_after = [
+        *processes_before,
         {
-            "pid": 200,
-            "name": "CalculatorApp",
-            "path": None,
-            "description": "Windows Calculator",
-            "product": "Windows Calculator",
-            "main_window_title": "Calcolatrice",
-        }
+            "pid": 888,
+            "name": "ApplicationFrameHost",
+            "path": r"C:\Windows\System32\ApplicationFrameHost.exe",
+        },
     ]
 
     calls = 0
@@ -726,6 +721,19 @@ def test_open_application_verifies_modern_windows_app_from_discovered_metadata(
         "_launch",
         lambda resolved: 999,
     )
+    monkeypatch.setattr(
+        tool,
+        "_find_visible_application_window",
+        lambda resolved: {
+            "pid": 888,
+            "name": "ApplicationFrameHost",
+            "path": r"C:\Windows\System32\ApplicationFrameHost.exe",
+            "description": None,
+            "product": None,
+            "main_window_title": "Calcolatrice",
+            "main_window_handle": 1234,
+        },
+    )
 
     result = tool.execute(
         {"name": "Calcolatrice"}
@@ -733,8 +741,8 @@ def test_open_application_verifies_modern_windows_app_from_discovered_metadata(
 
     assert result.success is True
     assert result.output is not None
-    assert result.output["verified_pid"] == 200
-    assert result.output["verified_process_name"] == "CalculatorApp"
+    assert result.output["verified_pid"] == 888
+    assert result.output["verified_process_name"] == "ApplicationFrameHost"
     assert result.output["already_running"] is False
 
 
