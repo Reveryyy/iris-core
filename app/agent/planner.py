@@ -232,6 +232,14 @@ class AgentPlanner:
         if reference_move_plan is not None:
             return reference_move_plan
 
+        process_discovery_plan = self._build_process_discovery_fallback(
+            goal=goal,
+            tool_definitions=available_tools,
+        )
+
+        if process_discovery_plan is not None:
+            return process_discovery_plan
+
         system_content = self._build_system_prompt(
             tool_definitions=available_tools,
             context=context,
