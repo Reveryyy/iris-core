@@ -219,3 +219,51 @@ def test_parse_powershell_processes_accepts_minimal_utf8_json():
             "executable": None,
         },
     ]
+
+
+def test_windows_process_discovery_reuses_open_application_discovery(monkeypatch):
+    from app.tools.pc_discovery import DiscoverPCStateTool
+
+    expected = [
+        {
+            "pid": 101,
+            "name": "chrome",
+            "path": r"C:Program FilesGooglechrome.exe",
+        },
+        {
+            "pid": 202,
+            "name": "Telegram",
+            "path": None,
+        },
+    ]
+
+    monkeypatch.setattr(
+        "app.tools.pc_discovery.OpenApplicationTool._discover_processes",
+        lambda: expected,
+    )
+
+    tool = DiscoverPCStateTool(
+        include_processes=True,
+    )
+
+    processes = tool._discover_processes_windows()
+
+    assert [
+        {
+            "pid": process.pid,
+            "name": process.name,
+            "executable": process.executable,
+        }
+        for process in processes
+    ] == [
+        {
+            "pid": 101,
+            "name": "chrome",
+            "executable": r"C:Program FilesGooglechrome.exe",
+        },
+        {
+            "pid": 202,
+            "name": "Telegram",
+            "executable": None,
+        },
+    ]
