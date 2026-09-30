@@ -14,6 +14,7 @@ from app.agent.pc_state import (
     RunningProcess,
 )
 from app.tools.base import Tool, ToolDefinition
+from app.tools.pc import OpenApplicationTool
 from app.tools.permissions import Permission
 from app.tools.result import ToolResult
 
@@ -289,48 +290,33 @@ class DiscoverPCStateTool(Tool):
     def _discover_processes_windows(
         self,
     ) -> list[RunningProcess]:
-        command = [
-            "powershell",
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            (
-                "[Console]::OutputEncoding = "
-                "[System.Text.Encoding]::UTF8; "
-                "Get-Process | "
-                "Select-Object Id,ProcessName,Path | "
-                "ConvertTo-Json -Compress"
-            ),
-        ]
+        """
+        Usa la stessa discovery Windows già validata da OpenApplicationTool.
 
-        completed = subprocess.run(
-            command,
-            capture_output=True,
-            text=False,
-            timeout=10,
-            check=False,
-            shell=False,
-        )
+        Manteniamo una sola implementazione del comando PowerShell, così
+        apertura applicazioni, verifica e lista processi non possono divergere
+        per encoding, percorso di PowerShell o formato JSON.
+        """
+        discovered = OpenApplicationTool._discover_processes()
 
-        if completed.returncode != 0:
-            raise OSError(
-                completed.stderr.strip()
-                or "Get-Process ha restituito un errore."
+        processes: list[RunningProcess] = []
+
+        for item in discovered:
+            processes.append(
+                RunningProcess(
+                    pid=item["pid"],
+                    name=item["name"],
+                    executable=item.get("path"),
+                )
             )
 
-        try:
-            stdout = completed.stdout.decode(
-                "utf-8"
-            )
-        except UnicodeDecodeError as error:
-            raise OSError(
-                "La discovery dei processi ha restituito "
-                "un output non decodificabile in UTF-8."
-            ) from error
+            if (
+                self.max_processes is not None
+                and len(processes) >= self.max_processes
+            ):
+                break
 
-        return self._parse_powershell_processes(
-            stdout
-        )
+        return processes
 
     def _discover_processes_posix(
         self,
