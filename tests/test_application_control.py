@@ -397,8 +397,6 @@ def test_candidate_sort_prefers_shorter_name_for_same_source():
 # ============================================================================
 
 
-
-
 def test_windows_process_discovery_decodes_unicode_as_utf8(monkeypatch):
     powershell_result = type(
         "Completed",
@@ -414,17 +412,22 @@ def test_windows_process_discovery_decodes_unicode_as_utf8(monkeypatch):
         },
     )()
 
+    calls = []
+
     monkeypatch.setattr(
         "app.tools.pc.os.name",
         "nt",
     )
     monkeypatch.setattr(
         "app.tools.pc.subprocess.run",
-        lambda *args, **kwargs: powershell_result,
+        lambda *args, **kwargs: (
+            calls.append((args, kwargs))
+            or powershell_result
+        ),
     )
     monkeypatch.setattr(
         "app.tools.pc._windows_powershell_executable",
-        lambda: r"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        lambda: r"C:WindowsSystem32WindowsPowerShell1.0powershell.exe",
     )
 
     processes = OpenApplicationTool._discover_processes()
@@ -433,9 +436,18 @@ def test_windows_process_discovery_decodes_unicode_as_utf8(monkeypatch):
         {
             "pid": 321,
             "name": "IRIS-é",
-            "path": r"C:\Program Files\IRIS-é\iris.exe",
+            "path": r"C:Program FilesIRIS-éiris.exe",
         }
     ]
+
+    assert calls
+    command = calls[0][0][0]
+    kwargs = calls[0][1]
+
+    assert kwargs["text"] is False
+    assert "OutputEncoding" in command[-1]
+    assert "[System.Text.Encoding]::UTF8" in command[-1]
+
 
 def test_open_application_process_discovery_keeps_core_process_fields(
     monkeypatch,
