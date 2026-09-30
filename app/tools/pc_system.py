@@ -10,6 +10,9 @@ from typing import Any
 from app.tools.application_resolver import (
     ApplicationResolver,
 )
+from app.tools.pc_discovery import (
+    DiscoverPCStateTool,
+)
 from app.tools.base import Tool, ToolDefinition
 from app.tools.permissions import Permission
 from app.tools.result import ToolResult
