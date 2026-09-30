@@ -396,6 +396,47 @@ def test_candidate_sort_prefers_shorter_name_for_same_source():
 # OPEN APPLICATION TOOL
 # ============================================================================
 
+
+
+
+def test_windows_process_discovery_decodes_unicode_as_utf8(monkeypatch):
+    powershell_result = type(
+        "Completed",
+        (),
+        {
+            "returncode": 0,
+            "stderr": b"",
+            "stdout": (
+                '[{"Id":321,"ProcessName":"IRIS-é",'
+                '"Path":"C:\\Program Files\\IRIS-é\\iris.exe"}]'
+                .encode("utf-8")
+            ),
+        },
+    )()
+
+    monkeypatch.setattr(
+        "app.tools.pc.os.name",
+        "nt",
+    )
+    monkeypatch.setattr(
+        "app.tools.pc.subprocess.run",
+        lambda *args, **kwargs: powershell_result,
+    )
+    monkeypatch.setattr(
+        "app.tools.pc._windows_powershell_executable",
+        lambda: r"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+    )
+
+    processes = OpenApplicationTool._discover_processes()
+
+    assert processes == [
+        {
+            "pid": 321,
+            "name": "IRIS-é",
+            "path": r"C:\Program Files\IRIS-é\iris.exe",
+        }
+    ]
+
 def test_open_application_process_discovery_keeps_core_process_fields(
     monkeypatch,
 ):
@@ -414,10 +455,11 @@ def test_open_application_process_discovery_keeps_core_process_fields(
         (),
         {
             "returncode": 0,
-            "stderr": "",
+            "stderr": b"",
             "stdout": (
                 '{"Id":123,"ProcessName":"CalculatorApp",'
                 '"Path":"C:\\Windows\\SystemApps\\CalculatorApp.exe"}'
+                .encode("utf-8")
             ),
         },
     )()
