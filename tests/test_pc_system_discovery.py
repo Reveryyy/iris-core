@@ -102,6 +102,34 @@ def test_list_processes_definition() -> None:
     assert definition.input_schema["required"] == []
 
 
+def test_list_processes_executes_discovery(monkeypatch):
+    from app.agent.pc_state import RunningProcess
+
+    monkeypatch.setattr(
+        "app.tools.pc_system.DiscoverPCStateTool._discover_processes",
+        lambda self: [
+            RunningProcess(
+                pid=101,
+                name="chrome",
+                executable=r"C:\Program Files\Google\chrome.exe",
+            ),
+        ],
+    )
+
+    result = ListProcessesTool().execute({})
+
+    assert result.success is True
+    assert result.output["count"] == 1
+    assert result.output["processes"] == [
+        {
+            "pid": 101,
+            "name": "chrome",
+            "executable": r"C:\Program Files\Google\chrome.exe",
+            "command_line": None,
+        }
+    ]
+
+
 def test_discovery_tools_reject_unexpected_arguments() -> None:
     tools = [
         DiscoverSystemInfoTool(),
