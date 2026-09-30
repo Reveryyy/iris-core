@@ -266,16 +266,23 @@ def test_windows_process_discovery_falls_back_to_tasklist(monkeypatch):
 
     processes = tool._discover_processes_windows()
 
-    assert processes == [
+    assert [
+        {
+            "pid": process.pid,
+            "name": process.name,
+            "executable": process.executable,
+        }
+        for process in processes
+    ] == [
         {
             "pid": 101,
             "name": "chrome.exe",
-            "path": None,
+            "executable": None,
         },
         {
             "pid": 202,
             "name": "IRIS-é.exe",
-            "path": None,
+            "executable": None,
         },
     ]
 
