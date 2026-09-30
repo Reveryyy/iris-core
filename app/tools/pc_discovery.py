@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import csv
 import getpass
+import io
 import json
+import locale
 import os
 import platform
 import subprocess
@@ -297,7 +300,23 @@ class DiscoverPCStateTool(Tool):
         apertura applicazioni, verifica e lista processi non possono divergere
         per encoding, percorso di PowerShell o formato JSON.
         """
-        discovered = OpenApplicationTool._discover_processes()
+        try:
+            discovered = OpenApplicationTool._discover_processes()
+        except (
+            OSError,
+            subprocess.SubprocessError,
+        ) as primary_error:
+            try:
+                discovered = self._discover_processes_windows_tasklist()
+            except (
+                OSError,
+                subprocess.SubprocessError,
+            ) as fallback_error:
+                raise OSError(
+                    "La discovery PowerShell dei processi è fallita "
+                    f"({primary_error}) e anche tasklist.exe ha fallito "
+                    f"({fallback_error})."
+                ) from fallback_error
 
         processes: list[RunningProcess] = []
 
@@ -317,6 +336,106 @@ class DiscoverPCStateTool(Tool):
                 break
 
         return processes
+
+    def _discover_processes_windows_tasklist(
+        self,
+    ) -> list[dict[str, Any]]:
+        """
+        Fallback nativo Windows quando la discovery PowerShell non è disponibile.
+        """
+        if os.name != "nt":
+            return []
+
+        system_root = os.environ.get(
+            "SystemRoot"
+        )
+
+        if not system_root:
+            raise OSError(
+                "La variabile d'ambiente SystemRoot non è disponibile."
+            )
+
+        executable = os.path.join(
+            system_root,
+            "System32",
+            "tasklist.exe",
+        )
+
+        if not os.path.exists(executable):
+            raise OSError(
+                f"tasklist.exe non trovata in '{executable}'."
+            )
+
+        completed = subprocess.run(
+            [
+                executable,
+                "/FO",
+                "CSV",
+                "/NH",
+            ],
+            capture_output=True,
+            text=False,
+            timeout=10,
+            check=False,
+            shell=False,
+            stdin=subprocess.DEVNULL,
+            creationflags=getattr(
+                subprocess,
+                "CREATE_NO_WINDOW",
+                0x08000000,
+            ),
+        )
+
+        if completed.returncode != 0:
+            stderr = completed.stderr
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode(
+                    locale.getpreferredencoding(False),
+                    errors="replace",
+                )
+            raise OSError(
+                str(stderr).strip()
+                or "tasklist.exe ha restituito un errore."
+            )
+
+        stdout = completed.stdout
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode(
+                locale.getpreferredencoding(False),
+                errors="replace",
+            )
+
+        processes: list[dict[str, Any]] = []
+
+        for row in csv.reader(
+            io.StringIO(
+                str(stdout)
+            )
+        ):
+            if len(row) < 2:
+                continue
+
+            name = row[0].strip()
+            raw_pid = row[1].strip()
+
+            if not name:
+                continue
+
+            try:
+                pid = int(raw_pid)
+            except ValueError:
+                continue
+
+            processes.append(
+                {
+                    "pid": pid,
+                    "name": name,
+                    "path": None,
+                }
+            )
+
+        return processes
+
 
     def _discover_processes_posix(
         self,
