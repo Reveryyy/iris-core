@@ -680,6 +680,8 @@ class OpenApplicationTool(Tool):
             "-NonInteractive",
             "-Command",
             (
+                "[Console]::OutputEncoding = "
+                "[System.Text.Encoding]::UTF8; "
                 "Get-Process | "
                 "Select-Object Id,ProcessName,Path | "
                 "ConvertTo-Json -Compress"
@@ -689,7 +691,7 @@ class OpenApplicationTool(Tool):
         completed = subprocess.run(
             command,
             capture_output=True,
-            text=True,
+            text=False,
             timeout=10.0,
             shell=False,
             check=False,
@@ -698,12 +700,45 @@ class OpenApplicationTool(Tool):
         )
 
         if completed.returncode != 0:
+            if isinstance(
+                completed.stderr,
+                bytes,
+            ):
+                error_output = (
+                    completed.stderr
+                    .decode(
+                        "utf-8",
+                        errors="replace",
+                    )
+                    .strip()
+                )
+            else:
+                error_output = str(
+                    completed.stderr
+                ).strip()
+
             raise OSError(
-                completed.stderr.strip()
+                error_output
                 or "Impossibile leggere i processi."
             )
 
-        raw = completed.stdout.strip()
+        if isinstance(
+            completed.stdout,
+            bytes,
+        ):
+            try:
+                raw = completed.stdout.decode(
+                    "utf-8-sig"
+                ).strip()
+            except UnicodeDecodeError as error:
+                raise OSError(
+                    "La discovery dei processi ha restituito "
+                    "un output non decodificabile in UTF-8."
+                ) from error
+        else:
+            raw = str(
+                completed.stdout
+            ).strip()
 
         if not raw:
             return []
