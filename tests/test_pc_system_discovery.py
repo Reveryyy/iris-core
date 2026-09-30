@@ -221,6 +221,65 @@ def test_parse_powershell_processes_accepts_minimal_utf8_json():
     ]
 
 
+def test_windows_process_discovery_falls_back_to_tasklist(monkeypatch):
+    from app.tools.pc_discovery import DiscoverPCStateTool
+
+    tasklist_result = type(
+        "Completed",
+        (),
+        {
+            "returncode": 0,
+            "stderr": b"",
+            "stdout": (
+                '"chrome.exe","101","Console","1","100,000 K"\r\n'
+                '"IRIS-é.exe","202","Console","1","50,000 K"\r\n'
+            ).encode("cp1252"),
+        },
+    )()
+
+    monkeypatch.setattr(
+        "app.tools.pc_discovery.os.name",
+        "nt",
+    )
+    monkeypatch.setattr(
+        "app.tools.pc_discovery.OpenApplicationTool._discover_processes",
+        lambda: (_ for _ in ()).throw(
+            OSError("PowerShell indisponibile")
+        ),
+    )
+    monkeypatch.setattr(
+        "app.tools.pc_discovery.os.path.exists",
+        lambda path: True,
+    )
+    monkeypatch.setattr(
+        "app.tools.pc_discovery.subprocess.run",
+        lambda *args, **kwargs: tasklist_result,
+    )
+    monkeypatch.setattr(
+        "app.tools.pc_discovery.os.environ",
+        {"SystemRoot": r"C:\Windows"},
+    )
+
+    tool = DiscoverPCStateTool(
+        include_processes=True,
+    )
+
+    processes = tool._discover_processes_windows()
+
+    assert processes == [
+        {
+            "pid": 101,
+            "name": "chrome.exe",
+            "path": None,
+        },
+        {
+            "pid": 202,
+            "name": "IRIS-é.exe",
+            "path": None,
+        },
+    ]
+
+
 def test_windows_process_discovery_reuses_open_application_discovery(monkeypatch):
     from app.tools.pc_discovery import DiscoverPCStateTool
 
