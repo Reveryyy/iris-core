@@ -20,6 +20,8 @@ def _make_terminal() -> TerminalUI:
     ]
     terminal._busy = False
     terminal._application = None
+    terminal._help_visible = False
+    terminal._transcript_scroll_position = None
     terminal._live_activity_text = lambda: []
     terminal._invalidate = lambda: None
 
