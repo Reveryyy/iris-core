@@ -396,6 +396,17 @@ class ListProcessesTool(Tool):
             ),
         )
 
+    @staticmethod
+    def _parse_powershell_processes(raw_output: str):
+        """
+        Compatibilità con il vecchio punto di accesso usato dai test e
+        da eventuali integrazioni interne.
+
+        La logica reale del parsing resta centralizzata in
+        DiscoverPCStateTool.
+        """
+        return DiscoverPCStateTool()._parse_powershell_processes(raw_output)
+
     @property
     def definition(self) -> ToolDefinition:
         return self._definition
