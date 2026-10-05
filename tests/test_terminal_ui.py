@@ -130,20 +130,39 @@ def test_terminal_transcript_scroll_defaults_to_following_the_bottom():
 
     terminal._state_lock = RLock()
     terminal._transcript_scroll_position = None
+    terminal.transcript = [
+        TranscriptItem(
+            kind="iris",
+            text="messaggio " * 20,
+            status="done",
+        )
+        for _ in range(20)
+    ]
+    terminal._busy = False
+    terminal._application = None
 
     assert (
         terminal._get_transcript_vertical_scroll(
             None
         )
-        == 10**9
+        == terminal._get_transcript_max_scroll()
     )
-
 
 def test_terminal_transcript_scroll_can_be_positioned_manually():
     terminal = TerminalUI.__new__(TerminalUI)
 
     terminal._state_lock = RLock()
     terminal._transcript_scroll_position = 17
+    terminal.transcript = [
+        TranscriptItem(
+            kind="iris",
+            text="messaggio " * 20,
+            status="done",
+        )
+        for _ in range(20)
+    ]
+    terminal._busy = False
+    terminal._application = None
 
     assert (
         terminal._get_transcript_vertical_scroll(
@@ -151,7 +170,6 @@ def test_terminal_transcript_scroll_can_be_positioned_manually():
         )
         == 17
     )
-
 
 def test_agent_output_formatter_exposes_discovered_applications():
     output = {
