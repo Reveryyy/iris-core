@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from pathlib import Path
 
 import pytest
@@ -404,11 +406,16 @@ def test_windows_process_discovery_decodes_unicode_as_utf8(monkeypatch):
         {
             "returncode": 0,
             "stderr": b"",
-            "stdout": (
-                '[{"Id":321,"ProcessName":"IRIS-é",'
-                '"Path":"C:\\Program Files\\IRIS-é\\iris.exe"}]'
-                .encode("utf-8")
-            ),
+            "stdout": json.dumps(
+                [
+                    {
+                        "Id": 321,
+                        "ProcessName": "IRIS-é",
+                        "Path": r"C:\Program Files\IRIS-é\iris.exe",
+                    }
+                ],
+                ensure_ascii=False,
+            ).encode("utf-8"),
         },
     )()
 
@@ -427,7 +434,7 @@ def test_windows_process_discovery_decodes_unicode_as_utf8(monkeypatch):
     )
     monkeypatch.setattr(
         "app.tools.pc._windows_powershell_executable",
-        lambda: r"C:WindowsSystem32WindowsPowerShell1.0powershell.exe",
+        lambda: r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
     )
 
     processes = OpenApplicationTool._discover_processes()
@@ -436,7 +443,7 @@ def test_windows_process_discovery_decodes_unicode_as_utf8(monkeypatch):
         {
             "pid": 321,
             "name": "IRIS-é",
-            "path": r"C:Program FilesIRIS-éiris.exe",
+            "path": r"C:\Program Files\IRIS-é\iris.exe",
         }
     ]
 
@@ -447,7 +454,6 @@ def test_windows_process_discovery_decodes_unicode_as_utf8(monkeypatch):
     assert kwargs["text"] is False
     assert "OutputEncoding" in command[-1]
     assert "[System.Text.Encoding]::UTF8" in command[-1]
-
 
 def test_open_application_process_discovery_keeps_core_process_fields(
     monkeypatch,
@@ -468,11 +474,14 @@ def test_open_application_process_discovery_keeps_core_process_fields(
         {
             "returncode": 0,
             "stderr": b"",
-            "stdout": (
-                '{"Id":123,"ProcessName":"CalculatorApp",'
-                '"Path":"C:\\Windows\\SystemApps\\CalculatorApp.exe"}'
-                .encode("utf-8")
-            ),
+            "stdout": json.dumps(
+                {
+                    "Id": 123,
+                    "ProcessName": "CalculatorApp",
+                    "Path": r"C:\Windows\SystemApps\CalculatorApp.exe",
+                },
+                ensure_ascii=False,
+            ).encode("utf-8"),
         },
     )()
 
@@ -490,8 +499,6 @@ def test_open_application_process_discovery_keeps_core_process_fields(
             "path": r"C:\Windows\SystemApps\CalculatorApp.exe",
         }
     ]
-
-
 
 class FakeResolver:
     def __init__(
@@ -775,10 +782,16 @@ def test_open_application_verifies_modern_windows_app_through_host_window(
         "_launch",
         lambda resolved: 999,
     )
-    monkeypatch.setattr(
-        tool,
-        "_find_visible_application_window",
-        lambda resolved: {
+    visible_calls = 0
+
+    def find_visible_application_window(resolved):
+        nonlocal visible_calls
+        visible_calls += 1
+
+        if visible_calls == 1:
+            return None
+
+        return {
             "pid": 888,
             "name": "ApplicationFrameHost",
             "path": r"C:\Windows\System32\ApplicationFrameHost.exe",
@@ -786,7 +799,12 @@ def test_open_application_verifies_modern_windows_app_through_host_window(
             "product": None,
             "main_window_title": "Calcolatrice",
             "main_window_handle": 1234,
-        },
+        }
+
+    monkeypatch.setattr(
+        tool,
+        "_find_visible_application_window",
+        find_visible_application_window,
     )
 
     result = tool.execute(
@@ -919,18 +937,29 @@ def test_open_application_detects_visible_modern_app_window_after_launch(
         "_launch",
         lambda resolved: 999,
     )
-    monkeypatch.setattr(
-        tool,
-        "_find_visible_application_window",
-        lambda resolved: {
+    visible_calls = 0
+
+    def find_visible_application_window(resolved):
+        nonlocal visible_calls
+        visible_calls += 1
+
+        if visible_calls == 1:
+            return None
+
+        return {
             "pid": 888,
             "name": "ApplicationFrameHost",
             "path": r"C:\Windows\System32\ApplicationFrameHost.exe",
-            "description": "Application Frame Host",
-            "product": "Microsoft Windows",
+            "description": None,
+            "product": None,
             "main_window_title": "Calcolatrice",
             "main_window_handle": 1234,
-        },
+        }
+
+    monkeypatch.setattr(
+        tool,
+        "_find_visible_application_window",
+        find_visible_application_window,
     )
 
     result = tool.execute(
@@ -1229,6 +1258,11 @@ def test_open_application_accepts_new_matching_process_even_if_name_differs(
         tool,
         "_launch",
         lambda resolved: 22222,
+    )
+    monkeypatch.setattr(
+        tool,
+        "_find_visible_application_window",
+        lambda resolved: None,
     )
 
     result = tool.execute(
