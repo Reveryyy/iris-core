@@ -130,3 +130,98 @@ def test_list_projects_tool() -> None:
         assert result.output["count"] == 2
     finally:
         db.close()
+
+
+def test_create_task_by_project_name() -> None:
+    db = _session()
+    try:
+        manager = ProjectManager(db)
+        project = manager.create_project("IRIS M6")
+
+        task = manager.create_task(
+            title="Task per progetto",
+            project_name="IRIS M6",
+        )
+
+        assert task.project_id == project.id
+    finally:
+        db.close()
+
+
+def test_list_tasks_by_project_name() -> None:
+    db = _session()
+    try:
+        manager = ProjectManager(db)
+        project = manager.create_project("IRIS M6")
+        manager.create_task(
+            title="Task collegato",
+            project_name=project.name,
+        )
+
+        tasks = manager.list_tasks(
+            project_name="IRIS M6",
+        )
+
+        assert len(tasks) == 1
+        assert tasks[0].title == "Task collegato"
+    finally:
+        db.close()
+
+
+def test_unknown_project_name_is_rejected() -> None:
+    db = _session()
+    try:
+        manager = ProjectManager(db)
+
+        try:
+            manager.create_task(
+                title="Task",
+                project_name="Progetto inesistente",
+            )
+        except ValueError as error:
+            assert "non trovato" in str(error)
+        else:
+            raise AssertionError(
+                "Un progetto inesistente doveva essere rifiutato."
+            )
+    finally:
+        db.close()
+
+
+def test_project_id_and_name_cannot_be_combined() -> None:
+    db = _session()
+    try:
+        manager = ProjectManager(db)
+        project = manager.create_project("IRIS M6")
+
+        try:
+            manager.create_task(
+                title="Task",
+                project_id=project.id,
+                project_name=project.name,
+            )
+        except ValueError as error:
+            assert "oppure" in str(error)
+        else:
+            raise AssertionError(
+                "ID e nome non devono essere usati insieme."
+            )
+    finally:
+        db.close()
+
+
+def test_task_tool_accepts_project_name() -> None:
+    db = _session()
+    try:
+        manager = ProjectManager(db)
+        project = manager.create_project("IRIS M6")
+
+        result = CreateTaskTool(manager).execute({
+            "title": "Test",
+            "project_name": "IRIS M6",
+        })
+
+        assert result.success is True
+        assert result.output["task"]["project_id"] == project.id
+    finally:
+        db.close()
