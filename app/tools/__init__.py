@@ -8,6 +8,14 @@ from app.tools.dispatcher import ToolDispatcher
 from app.tools.executor import ToolExecutionService
 from app.tools.parser import ToolCallParser
 from app.tools.permissions import Permission, PermissionManager
+from app.tools.projects import (
+    CreateProjectTool,
+    ListProjectsTool,
+    UpdateProjectTool,
+    CreateTaskTool,
+    ListTasksTool,
+    UpdateTaskTool,
+)
 from app.tools.pc_filesystem import (
     InspectPathTool,
     ListDirectoryTool,
@@ -62,6 +70,12 @@ __all__ = [
     "ToolResult",
     "Permission",
     "PermissionManager",
+    "CreateProjectTool",
+    "ListProjectsTool",
+    "UpdateProjectTool",
+    "CreateTaskTool",
+    "ListTasksTool",
+    "UpdateTaskTool",
     "EchoTool",
     "create_tool_system",
     "InspectPathTool",
