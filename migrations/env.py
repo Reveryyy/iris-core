@@ -7,6 +7,7 @@ from alembic import context
 
 from app.database import Base
 from app.memory.model import Memory
+from app.projects.model import Project, Task
 
 
 config = context.config
