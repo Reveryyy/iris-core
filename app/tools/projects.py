@@ -156,13 +156,17 @@ class CreateTaskTool(Tool):
         self._definition = ToolDefinition(
             name="create_task",
             description=(
-                "Crea un task persistente, collegandolo opzionalmente a un progetto."
+                "Crea un task persistente, collegandolo opzionalmente a un progetto tramite ID o nome."
             ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "title": {"type": "string"},
                     "project_id": {"type": "integer", "minimum": 1},
+                    "project_name": {
+                        "type": "string",
+                        "description": "Nome esatto del progetto a cui collegare il task.",
+                    },
                     "description": {"type": "string"},
                     "priority": {
                         "type": "string",
@@ -189,6 +193,7 @@ class CreateTaskTool(Tool):
             task = self.manager.create_task(
                 title=arguments.get("title"),
                 project_id=arguments.get("project_id"),
+                project_name=arguments.get("project_name"),
                 description=arguments.get("description"),
                 priority=arguments.get("priority", "medium"),
                 due_at=_parse_datetime(arguments.get("due_at")),
@@ -210,12 +215,16 @@ class ListTasksTool(Tool):
         self._definition = ToolDefinition(
             name="list_tasks",
             description=(
-                "Elenca i task persistenti, opzionalmente filtrati per progetto o stato."
+                "Elenca i task persistenti, opzionalmente filtrati per progetto (ID o nome) o stato."
             ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "integer", "minimum": 1},
+                    "project_name": {
+                        "type": "string",
+                        "description": "Nome esatto del progetto da filtrare.",
+                    },
                     "status": {
                         "type": "string",
                         "enum": ["todo", "in_progress", "completed", "cancelled"],
@@ -236,6 +245,7 @@ class ListTasksTool(Tool):
         try:
             tasks = self.manager.list_tasks(
                 project_id=arguments.get("project_id"),
+                project_name=arguments.get("project_name"),
                 status=arguments.get("status"),
             )
             return ToolResult(
@@ -256,7 +266,7 @@ class UpdateTaskTool(Tool):
         self._definition = ToolDefinition(
             name="update_task",
             description=(
-                "Aggiorna un task esistente. Usa status='completed' per segnare un task come completato."
+                "Aggiorna un task esistente. Usa status='completed' per segnare un task come completato; il progetto può essere indicato per ID o nome."
             ),
             input_schema={
                 "type": "object",
@@ -265,6 +275,10 @@ class UpdateTaskTool(Tool):
                     "title": {"type": "string"},
                     "description": {"type": "string"},
                     "project_id": {"type": "integer", "minimum": 1},
+                    "project_name": {
+                        "type": "string",
+                        "description": "Nome esatto del nuovo progetto del task.",
+                    },
                     "status": {
                         "type": "string",
                         "enum": ["todo", "in_progress", "completed", "cancelled"],
@@ -296,6 +310,7 @@ class UpdateTaskTool(Tool):
                 title=arguments.get("title"),
                 description=arguments.get("description"),
                 project_id=arguments.get("project_id"),
+                project_name=arguments.get("project_name"),
                 status=arguments.get("status"),
                 priority=arguments.get("priority"),
                 due_at=_parse_datetime(arguments.get("due_at")),
