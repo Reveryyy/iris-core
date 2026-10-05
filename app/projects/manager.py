@@ -58,6 +58,12 @@ class ProjectManager:
     def get_project(self, project_id: int) -> Project | None:
         return self.db.get(Project, project_id)
 
+    def get_project_by_name(self, name: str) -> Project | None:
+        name = self._required_text(name, "Il nome del progetto")
+        return self.db.scalar(
+            select(Project).where(Project.name == name)
+        )
+
     def list_projects(
         self,
         status: str | None = None,
@@ -114,6 +120,7 @@ class ProjectManager:
         self,
         title: str,
         project_id: int | None = None,
+        project_name: str | None = None,
         description: str | None = None,
         priority: str = "medium",
         due_at: datetime | None = None,
@@ -121,13 +128,13 @@ class ProjectManager:
         title = self._required_text(title, "Il titolo del task")
         self._validate_choice(priority, self.TASK_PRIORITIES, "task priority")
 
-        if project_id is not None and self.get_project(project_id) is None:
-            raise ValueError(
-                f"Progetto con ID {project_id} non trovato."
-            )
+        resolved_project_id = self._resolve_project_id(
+            project_id=project_id,
+            project_name=project_name,
+        )
 
         task = Task(
-            project_id=project_id,
+            project_id=resolved_project_id,
             title=title,
             description=self._optional_text(description),
             status="todo",
@@ -145,18 +152,27 @@ class ProjectManager:
     def list_tasks(
         self,
         project_id: int | None = None,
+        project_name: str | None = None,
         status: str | None = None,
     ) -> list[Task]:
         if status is not None:
             self._validate_choice(status, self.TASK_STATUSES, "task status")
+
+        resolved_project_id = self._resolve_project_id(
+            project_id=project_id,
+            project_name=project_name,
+            allow_none=True,
+        )
 
         statement = select(Task).order_by(
             Task.status.asc(),
             Task.priority.desc(),
             Task.created_at.desc(),
         )
-        if project_id is not None:
-            statement = statement.where(Task.project_id == project_id)
+        if resolved_project_id is not None:
+            statement = statement.where(
+                Task.project_id == resolved_project_id
+            )
         if status is not None:
             statement = statement.where(Task.status == status)
 
@@ -168,6 +184,7 @@ class ProjectManager:
         title: str | None = None,
         description: str | None = None,
         project_id: int | None = None,
+        project_name: str | None = None,
         status: str | None = None,
         priority: str | None = None,
         due_at: datetime | None = None,
@@ -182,12 +199,11 @@ class ProjectManager:
         if description is not None:
             task.description = self._optional_text(description)
 
-        if project_id is not None:
-            if self.get_project(project_id) is None:
-                raise ValueError(
-                    f"Progetto con ID {project_id} non trovato."
-                )
-            task.project_id = project_id
+        if project_id is not None or project_name is not None:
+            task.project_id = self._resolve_project_id(
+                project_id=project_id,
+                project_name=project_name,
+            )
 
         if status is not None:
             self._validate_choice(status, self.TASK_STATUSES, "task status")
@@ -203,6 +219,43 @@ class ProjectManager:
         self.db.commit()
         self.db.refresh(task)
         return task
+
+    def _resolve_project_id(
+        self,
+        project_id: int | None,
+        project_name: str | None,
+        allow_none: bool = False,
+    ) -> int | None:
+        if project_id is not None and project_name is not None:
+            raise ValueError(
+                "Specificare project_id oppure project_name, non entrambi."
+            )
+
+        if project_id is not None:
+            if not isinstance(project_id, int) or project_id <= 0:
+                raise ValueError(
+                    "project_id deve essere un intero positivo."
+                )
+
+            if self.get_project(project_id) is None:
+                raise ValueError(
+                    f"Progetto con ID {project_id} non trovato."
+                )
+
+            return project_id
+
+        if project_name is not None:
+            project = self.get_project_by_name(project_name)
+            if project is None:
+                raise ValueError(
+                    f"Progetto chiamato '{project_name}' non trovato."
+                )
+            return project.id
+
+        if allow_none:
+            return None
+
+        return None
 
     @staticmethod
     def _required_text(value: str, label: str) -> str:
