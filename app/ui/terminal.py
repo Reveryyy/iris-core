@@ -2132,39 +2132,41 @@ class TerminalUI:
                 self.transcript
             )
 
-        lines: list[str] = []
+        blocks: list[str] = []
 
         for item in items:
             if item.kind == "user":
-                lines.append(
+                blocks.append(
                     f"› {item.text}"
                 )
 
             elif item.kind == "iris":
-                lines.append(
-                    f"IRIS"
+                iris_lines = [
+                    "IRIS"
                     + (
                         f" [{item.status}]"
                         if item.status
                         else ""
-                    )
-                )
-                lines.append(
-                    item.text
-                )
+                    ),
+                    item.text,
+                ]
 
                 if item.meta:
-                    lines.append(
+                    iris_lines.append(
                         item.meta
                     )
 
+                blocks.append(
+                    "\n".join(iris_lines)
+                )
+
             elif item.kind == "system":
-                lines.append(
+                blocks.append(
                     f"· {item.text}"
                 )
 
         text = "\n\n".join(
-            lines
+            blocks
         )
 
         if not text:
