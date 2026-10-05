@@ -38,6 +38,15 @@ from app.memory.local_embedding import (
 )
 from app.memory.manager import MemoryManager
 from app.memory.service import MemoryService
+from app.projects.manager import ProjectManager
+from app.tools.projects import (
+    CreateProjectTool,
+    ListProjectsTool,
+    UpdateProjectTool,
+    CreateTaskTool,
+    ListTasksTool,
+    UpdateTaskTool,
+)
 from app.tools.builtin import EchoTool
 from app.tools.core import CoreToolHandler
 from app.tools.dispatcher import ToolDispatcher
@@ -507,6 +516,37 @@ def main() -> None:
         memory_service = MemoryService(
             memory_manager
         )
+
+        # =====================================================================
+        # PROJECTS / TASKS
+        # =====================================================================
+
+        project_manager = ProjectManager(db)
+
+        tool_registry.register(
+            CreateProjectTool(project_manager)
+        )
+
+        tool_registry.register(
+            ListProjectsTool(project_manager)
+        )
+
+        tool_registry.register(
+            UpdateProjectTool(project_manager)
+        )
+
+        tool_registry.register(
+            CreateTaskTool(project_manager)
+        )
+
+        tool_registry.register(
+            ListTasksTool(project_manager)
+        )
+
+        tool_registry.register(
+            UpdateTaskTool(project_manager)
+        )
+
 
         # =====================================================================
         # CORE
