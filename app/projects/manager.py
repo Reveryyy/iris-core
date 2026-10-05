@@ -120,10 +120,10 @@ class ProjectManager:
         self,
         title: str,
         project_id: int | None = None,
-        project_name: str | None = None,
         description: str | None = None,
         priority: str = "medium",
         due_at: datetime | None = None,
+        project_name: str | None = None,
     ) -> Task:
         title = self._required_text(title, "Il titolo del task")
         self._validate_choice(priority, self.TASK_PRIORITIES, "task priority")
@@ -152,8 +152,8 @@ class ProjectManager:
     def list_tasks(
         self,
         project_id: int | None = None,
-        project_name: str | None = None,
         status: str | None = None,
+        project_name: str | None = None,
     ) -> list[Task]:
         if status is not None:
             self._validate_choice(status, self.TASK_STATUSES, "task status")
@@ -184,10 +184,10 @@ class ProjectManager:
         title: str | None = None,
         description: str | None = None,
         project_id: int | None = None,
-        project_name: str | None = None,
         status: str | None = None,
         priority: str | None = None,
         due_at: datetime | None = None,
+        project_name: str | None = None,
     ) -> Task | None:
         task = self.get_task(task_id)
         if task is None:
